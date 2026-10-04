@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import path from 'node:path';
 import {readFile,mkdir,writeFile} from 'node:fs/promises';
-import {createReadStream} from 'node:fs';
+import {createReadStream,existsSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {chromium} from 'playwright';
@@ -34,8 +34,10 @@ const origin=`http://127.0.0.1:${server.address().port}`,report={checks:[],sourc
 const check=text=>{report.checks.push(text);console.log('PASS:',text);};
 const executablePath=process.env.RTXCUDA_CHROME||path.join(chromiumRoot,'out/RTXCuda/chrome.exe');
 report.binaries={};
-for(const file of ['chrome.exe','chrome.dll','blink_modules.dll','gpu_command_buffer_service.dll',
-  'gpu_webgpu.dll','gpu_common_interfaces_shared.dll','rtx_cuda/rtx_cuda_host.exe']) {
+const componentBuild=existsSync(path.join(path.dirname(executablePath),'blink_modules.dll'));
+const componentFiles=componentBuild?['blink_modules.dll','gpu_command_buffer_service.dll',
+  'gpu_webgpu.dll','gpu_common_interfaces_shared.dll']:[];
+for(const file of ['chrome.exe','chrome.dll',...componentFiles,'rtx_cuda/rtx_cuda_host.exe']) {
   const hash=createHash('sha256');for await(const chunk of createReadStream(path.join(path.dirname(executablePath),file)))hash.update(chunk);
   report.binaries[file]=hash.digest('hex');
 }

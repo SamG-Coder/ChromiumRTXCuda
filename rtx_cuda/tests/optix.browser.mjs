@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import http from 'node:http';
 import path from 'node:path';
 import {readFile,writeFile,mkdir} from 'node:fs/promises';
-import {createReadStream} from 'node:fs';
+import {createReadStream,existsSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {chromium} from 'playwright';
 const root=path.resolve(import.meta.dirname,'../..');
@@ -16,8 +16,10 @@ const clearwater=path.resolve(process.env.CLEARWATER_ROOT||path.join(root,'../..
 const waterSource=await readFile(path.join(clearwater,'src/clearwater.cu'),'utf8');
 const report={passed:false,checks:[],binaries:{}};
 report.clearwaterSourceSha256=createHash('sha256').update(waterSource).digest('hex');
-for(const file of ['chrome.exe','chrome.dll','blink_modules.dll','gpu_command_buffer_service.dll',
-  'gpu_webgpu.dll','gpu_common_interfaces_shared.dll','rtx_cuda/rtx_cuda_host.exe']) {
+const componentBuild=existsSync(path.join(path.dirname(executablePath),'blink_modules.dll'));
+const componentFiles=componentBuild?['blink_modules.dll','gpu_command_buffer_service.dll',
+  'gpu_webgpu.dll','gpu_common_interfaces_shared.dll']:[];
+for(const file of ['chrome.exe','chrome.dll',...componentFiles,'rtx_cuda/rtx_cuda_host.exe']) {
   const hash=createHash('sha256');for await(const data of createReadStream(path.join(path.dirname(executablePath),file)))hash.update(data);
   report.binaries[file]=hash.digest('hex');
 }

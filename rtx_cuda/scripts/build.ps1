@@ -2,11 +2,13 @@ param(
   [string]$NgxSdk = '',
   [string]$NgxRuntime = '',
   [string]$OptixSdk = '',
-  [string]$Output = 'out/RTXCuda',
+  [string]$Output = '',
+  [switch]$Release,
   [ValidateRange(1,64)][int]$Jobs = 8,
   [switch]$NativeOnly
 )
 $ErrorActionPreference = 'Stop'
+if (!$Output) { $Output = if ($Release) { 'out/RTXCudaRelease' } else { 'out/RTXCuda' } }
 $sourceRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $outputPath = [IO.Path]::GetFullPath((Join-Path $sourceRoot $Output))
 if (!$outputPath.StartsWith($sourceRoot + [IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)) {
@@ -25,17 +27,20 @@ if (!$NativeOnly) {
   $env:DEPOT_TOOLS_WIN_TOOLCHAIN = '0'
   New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
   $argsFile = Join-Path $outputPath 'args.gn'
+  $component = if ($Release) { 'false' } else { 'true' }
   if (!(Test-Path -LiteralPath $argsFile)) {
-    @'
+    @"
 is_debug = false
-is_component_build = true
+is_component_build = $component
 symbol_level = 0
 blink_symbol_level = 0
 v8_symbol_level = 0
 target_cpu = "x64"
 use_remoteexec = false
 use_siso = true
-'@ | Set-Content -LiteralPath $argsFile -Encoding utf8
+"@ | Set-Content -LiteralPath $argsFile -Encoding utf8
+  } elseif ($Release -and (Get-Content -LiteralPath $argsFile -Raw) -notmatch '(?m)^\s*is_component_build\s*=\s*false\s*$') {
+    throw 'Release mode needs is_component_build = false. Use a separate output directory; the existing build was not changed.'
   }
   Push-Location $sourceRoot
   try {

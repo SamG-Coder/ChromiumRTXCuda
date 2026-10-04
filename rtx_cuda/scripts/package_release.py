@@ -1,4 +1,4 @@
-"""Package a tested Windows component build without checkout paths or symbols.
+"""Package a tested Windows build without checkout paths or symbols.
 
 Generate the dependency list with:
   gn desc out/RTXCuda //chrome:chrome runtime_deps > chrome-runtime-deps.txt
@@ -59,10 +59,13 @@ def main():
         parser.error("The actual Chromium browser integration tests must pass first")
 
     build = args.build_dir.resolve()
+    build_args = (build / "args.gn").read_text(encoding="utf-8-sig")
+    component_build = not re.search(r"(?m)^\s*is_component_build\s*=\s*false\s*$", build_args)
     interop_report = json.loads((PROJECT / "test-results/cuda-interop/report.json").read_text(encoding="utf-8"))
-    required_interop_binaries = {"chrome.exe", "chrome.dll", "blink_modules.dll",
-                                "gpu_command_buffer_service.dll", "gpu_webgpu.dll",
-                                "gpu_common_interfaces_shared.dll", "rtx_cuda/rtx_cuda_host.exe"}
+    required_interop_binaries = {"chrome.exe", "chrome.dll", "rtx_cuda/rtx_cuda_host.exe"}
+    if component_build:
+        required_interop_binaries.update({"blink_modules.dll", "gpu_command_buffer_service.dll",
+                                         "gpu_webgpu.dll", "gpu_common_interfaces_shared.dll"})
     if (not interop_report.get("passed") or
             not required_interop_binaries.issubset(interop_report.get("binaries", {}))):
         parser.error("The actual CUDA / WebGPU / ClearWater interop tests must pass first")
@@ -162,9 +165,9 @@ def main():
     text_file("Start demo.cmd", '@echo off\ncd /d "%~dp0"\nnode rtx_cuda\\scripts\\serve.mjs\npause\n')
     text_file("READ-ME-FIRST.txt", f"""ChromiumRTXCuda {args.version} - Windows x64 experimental release
 
-Extract the complete archive into a writable folder. Run Start ChromiumRTXCuda.cmd.
-It uses a separate profile in this folder; the system browser is not modified.
-You can also run chrome.exe directly. At startup it restores read/execute access
+Extract the complete archive into a writable folder and run chrome.exe.
+Start ChromiumRTXCuda.cmd optionally uses a separate profile in this folder;
+the system browser is not modified. At startup the browser restores read/execute access
 for Chromium's sandbox to the packaged runtime files, which ZIP extraction does
 not preserve. Profiles and downloads do not inherit these permissions.
 For the included demo, install Node.js, run Start demo.cmd, then open
@@ -216,6 +219,7 @@ Source: https://github.com/SamG-Coder/ChromiumRTXCuda
         }, indent=2) + "\n")
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     manifest = {"version": args.version, "sourceRevision": revision, "dirty": dirty,
+                "componentBuild": component_build,
                 "platform": "windows-x64", "files": dict(sorted(files.items()))}
     text_file("release-manifest.json", json.dumps(manifest, indent=2) + "\n")
     if args.stage_only:

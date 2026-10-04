@@ -406,6 +406,21 @@ builds Chromium in `out/RTXCuda`, and stages the helper and installed NVRTC DLLs
 under `out/RTXCuda/rtx_cuda`. It does not modify the system browser or disable
 Chromium's renderer sandbox. `-NativeOnly` skips the Chromium build.
 
+For publishing, add **`-Release`** to the same command. This uses a separate
+`out/RTXCudaRelease` directory with `is_component_build = false`; the default
+`out/RTXCuda` component build remains available for faster development builds.
+Both configurations disable debug symbols. Changing the link configuration
+requires a full initial Chromium compile. Do not remove DLLs from a component
+build to make it smaller: they are runtime dependencies.
+
+Validate the release executable by setting `RTXCUDA_CHROME` to
+`out/RTXCudaRelease/chrome.exe` before running the browser, CUDA interop,
+visibility and OptiX checks. Generate its own dependency list with
+`gn desc out/RTXCudaRelease //chrome:chrome runtime_deps`, then supply that list
+and `--build-dir out/RTXCudaRelease` to `rtx_cuda/scripts/package_release.py`.
+The packager checks the tested binary hashes for the selected build, includes
+its runtime dependencies, and records `componentBuild` in the release manifest.
+
 The helper first looks for `ngx/nvngx_dlss.dll` beside its executable, then
 uses the configured development runtime directory. Portable builds can leave
 `RTXCUDA_NGX_RUNTIME` empty and supply this application-local runtime instead.
