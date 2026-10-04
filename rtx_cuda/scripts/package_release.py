@@ -7,6 +7,7 @@ NVIDIA runtime binaries and their original licenses are supplied by the builder.
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -18,8 +19,18 @@ ROOT = Path(__file__).resolve().parents[2]
 PROJECT = ROOT / "rtx_cuda"
 
 
+def filesystem_path(path):
+    """CopyFile2 requires an extended path for Chromium's long filenames."""
+    value = str(Path(path).resolve())
+    if os.name != "nt" or value.startswith("\\\\?\\"):
+        return value
+    if value.startswith("\\\\"):
+        return "\\\\?\\UNC\\" + value[2:]
+    return "\\\\?\\" + value
+
+
 def sha256(path):
-    with path.open("rb") as stream:
+    with open(filesystem_path(path), "rb") as stream:
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
@@ -64,8 +75,8 @@ def main():
                 if child.is_file():
                     copy(child, Path(relative) / child.relative_to(source))
             return
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+        Path(filesystem_path(destination.parent)).mkdir(parents=True, exist_ok=True)
+        shutil.copy2(filesystem_path(source), filesystem_path(destination))
         files[destination.relative_to(stage).as_posix()] = sha256(destination)
 
     dependencies = args.runtime_deps.read_text(encoding="utf-8-sig").splitlines()
@@ -157,7 +168,7 @@ Source: https://github.com/SamG-Coder/ChromiumRTXCuda
     archive = output / f"{name}.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zipped:
         for relative in sorted(files):
-            zipped.write(stage / relative, f"{name}/{relative}")
+            zipped.write(filesystem_path(stage / relative), f"{name}/{relative}")
     if archive.stat().st_size >= 2 * 1024**3:
         raise ValueError("Archive exceeds GitHub's per-asset size limit")
     checksum = sha256(archive)
