@@ -44,6 +44,8 @@ def main():
     parser.add_argument("--cuda-toolkit", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, default=PROJECT / "dist")
     parser.add_argument("--allow-dirty", action="store_true", help="Internal packaging checks only")
+    parser.add_argument("--stage-only", action="store_true",
+                        help="Prepare files for normal-startup testing without creating a release ZIP")
     args = parser.parse_args()
     if not re.fullmatch(r"[0-9][A-Za-z0-9.+-]*", args.version):
         parser.error("Version must be a filename-safe release version")
@@ -56,6 +58,14 @@ def main():
         parser.error("The actual Chromium browser integration tests must pass first")
 
     build = args.build_dir.resolve()
+    startup_report_path = PROJECT / "test-results/portable-startup.json"
+    startup_report = (json.loads(startup_report_path.read_text(encoding="utf-8"))
+                      if startup_report_path.is_file() else {})
+    startup_valid = (startup_report.get("passed") and
+                     startup_report.get("executableSha256") == sha256(build / "chrome.exe"))
+    if not startup_valid and not args.stage_only:
+        parser.error("Use --stage-only, test normal startup with the staged chrome.exe, "
+                     "then package the validated executable")
     native = args.native_dir.resolve()
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -119,6 +129,7 @@ def main():
         path.write_text(contents, encoding="utf-8")
         files[relative] = sha256(path)
 
+    text_file("ChromiumRTXCuda.portable", "ChromiumRTXCuda portable v1\n")
     text_file("Start ChromiumRTXCuda.cmd", '@echo off\nstart "" "%~dp0chrome.exe" '
               '--user-data-dir="%~dp0profile" --no-first-run --no-default-browser-check\n')
     text_file("Start demo.cmd", '@echo off\ncd /d "%~dp0"\nnode rtx_cuda\\scripts\\serve.mjs\npause\n')
@@ -126,6 +137,9 @@ def main():
 
 Extract the complete archive into a writable folder. Run Start ChromiumRTXCuda.cmd.
 It uses a separate profile in this folder; the system browser is not modified.
+You can also run chrome.exe directly. At startup it restores read/execute access
+for Chromium's sandbox to the packaged runtime files, which ZIP extraction does
+not preserve. Profiles and downloads do not inherit these permissions.
 For the included demo, install Node.js, run Start demo.cmd, then open
 http://127.0.0.1:8087/ in this browser and click Request GPU access.
 
@@ -161,10 +175,21 @@ Source: https://github.com/SamG-Coder/ChromiumRTXCuda
         if "executablePath" in report:
             report["executablePath"] = "chrome.exe"
         text_file(f"validation/{report_name}", json.dumps(report, indent=2) + "\n")
+    # Raw startup diagnostics contain local paths and Windows account SIDs.
+    # Publish only the checks and executable hash.
+    if startup_valid:
+        text_file("validation/portable-startup.json", json.dumps({
+            key: startup_report[key]
+            for key in ("passed", "normalStartup", "executableSha256", "checks")
+        }, indent=2) + "\n")
     revision = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     manifest = {"version": args.version, "sourceRevision": revision, "dirty": dirty,
                 "platform": "windows-x64", "files": dict(sorted(files.items()))}
     text_file("release-manifest.json", json.dumps(manifest, indent=2) + "\n")
+    if args.stage_only:
+        print(json.dumps({"stage": str(stage), "revision": revision,
+                          "files": len(files), "archiveCreated": False}, indent=2))
+        return
     archive = output / f"{name}.zip"
     with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zipped:
         for relative in sorted(files):

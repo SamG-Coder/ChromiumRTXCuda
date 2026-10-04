@@ -40,6 +40,7 @@
 #include "chrome/app/delay_load_failure_hook_win.h"
 #include "chrome/app/exit_code_watcher_win.h"
 #include "chrome/app/main_dll_loader_win.h"
+#include "chrome/app/portable_sandbox_win.h"
 #include "chrome/browser/policy/policy_path_parser.h"
 #include "chrome/browser/win/chrome_process_finder.h"
 #include "chrome/chrome_elf/chrome_elf_main.h"
@@ -372,6 +373,15 @@ int main() {
 
   if (AttemptFastNotify(*command_line))
     return 0;
+
+  if (process_type.empty()) {
+    std::wstring portable_error;
+    if (!PreparePortableSandbox(&portable_error)) {
+      ::MessageBoxW(nullptr, portable_error.c_str(),
+                    L"ChromiumRTXCuda could not start", MB_OK | MB_ICONERROR);
+      return 1;
+    }
+  }
 
   // Load and launch the chrome dll. *Everything* happens inside.
   VLOG(1) << "About to load main DLL.";

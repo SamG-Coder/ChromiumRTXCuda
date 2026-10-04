@@ -288,12 +288,14 @@ other platforms when testing the platform-independent permission mapping.
 ### Windows release packaging
 
 After the browser integration tests pass, commit the source and generate
-Chromium's runtime dependency list:
+Chromium's runtime dependency list. For a newly built executable, first run
+the packager with `--stage-only`, run `test:portable-startup` against the printed
+staging path, then repeat the packaging command without `--stage-only`:
 
 ```powershell
 gn desc out/RTXCuda //chrome:chrome runtime_deps > chrome-runtime-deps.txt
 python rtx_cuda/scripts/package_release.py `
-  --version 0.1.0-alpha.1 `
+  --version 0.1.0-alpha.2 `
   --runtime-deps chrome-runtime-deps.txt `
   --native-dir rtx_cuda/build-portable/Release `
   --ngx-runtime 'D:/SDKs/streamline/bin/x64' `
@@ -302,12 +304,38 @@ python rtx_cuda/scripts/package_release.py `
 
 Configure `build-portable` with the NGX SDK and an empty runtime path, build
 it, and place the licensed runtime in its `Release/ngx` folder before testing.
-The packager requires passing browser evidence and a clean checkout. It
+The packager requires passing browser and normal-startup evidence for the
+current executable, and a clean checkout. It
 includes the component DLLs and resource files, the native helper, runtime
 licenses, JavaScript modules, demo, custom icon, and validation reports. It
 excludes PDBs and creates a SHA-256 manifest plus an archive checksum. Test the
-staged `chrome.exe` again using `RTXCUDA_CHROME` before publishing the archive.
+extracted `chrome.exe` again using `RTXCUDA_CHROME` before publishing the archive.
 `Start ChromiumRTXCuda.cmd` uses a separate profile beside the portable build.
+
+The portable marker enables startup preparation in `chrome.exe` itself, so
+double-clicking the executable also works. ZIP archives do not preserve the
+NTFS access-control entries required by Chromium's AppContainer sandbox.
+Startup grants the same `chromeInstallFiles` and `lpacChromeInstallFiles`
+capabilities used by Chromium's installer, with read/execute access only on
+runtime files beside the executable and locale packs. It does not grant
+inheritable access to profiles or downloads, follow linked runtime files or
+locale directories, or disable a sandbox. A preparation failure produces an
+error dialog instead of silently crashing.
+
+Before publishing, extract the ZIP into a fresh directory and run both tests:
+
+```powershell
+$env:RTXCUDA_CHROME = 'D:/fresh-extract/ChromiumRTXCuda/chrome.exe'
+$env:RTXCUDA_REQUIRE_FRESH_ACL = '1'
+npm --prefix rtx_cuda run test:portable-startup
+Remove-Item Env:RTXCUDA_REQUIRE_FRESH_ACL
+npm --prefix rtx_cuda run test:browser
+```
+
+The startup test launches with normal browser feature defaults, without
+Playwright's startup switches. It verifies the actual network AppContainer,
+GPU sandbox, runtime file permissions, and unchanged profile permissions.
+Ordinary browser integration tests alone do not cover this startup path.
 
 The project icon is generated artwork with Chromium's circular silhouette,
 green and graphite GPU colors, and a circuit hub. The master and Windows ICO
