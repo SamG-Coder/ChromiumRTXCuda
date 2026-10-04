@@ -1,7 +1,7 @@
 """Package a tested Windows build without checkout paths or symbols.
 
 Generate the dependency list with:
-  gn desc out/RTXCuda //chrome:chrome runtime_deps > chrome-runtime-deps.txt
+  gn desc out/RTXCudaRelease //chrome:chrome runtime_deps > chrome-runtime-deps.txt
 NVIDIA runtime binaries and their original licenses are supplied by the builder.
 """
 import argparse
@@ -38,7 +38,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--version", required=True)
     parser.add_argument("--runtime-deps", type=Path, required=True)
-    parser.add_argument("--build-dir", type=Path, default=ROOT / "out/RTXCuda")
+    parser.add_argument("--build-dir", type=Path, default=ROOT / "out/RTXCudaRelease")
     parser.add_argument("--native-dir", type=Path, default=PROJECT / "build-portable/Release")
     parser.add_argument("--ngx-runtime", type=Path, required=True)
     parser.add_argument("--cuda-toolkit", type=Path, required=True)

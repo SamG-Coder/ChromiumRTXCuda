@@ -417,7 +417,8 @@ Validate the release executable by setting `RTXCUDA_CHROME` to
 `out/RTXCudaRelease/chrome.exe` before running the browser, CUDA interop,
 visibility and OptiX checks. Generate its own dependency list with
 `gn desc out/RTXCudaRelease //chrome:chrome runtime_deps`, then supply that list
-and `--build-dir out/RTXCudaRelease` to `rtx_cuda/scripts/package_release.py`.
+to `rtx_cuda/scripts/package_release.py`, which defaults to that release
+directory. Use `--build-dir out/RTXCuda` only to package a development build.
 The packager checks the tested binary hashes for the selected build, includes
 its runtime dependencies, and records `componentBuild` in the release manifest.
 
