@@ -7,6 +7,9 @@ import "gpu/ipc/common/sync_token.mojom";
 import "third_party/blink/public/mojom/permissions/permission_status.mojom";
 
 // Document-scoped browser broker. No native GPU handles cross into a renderer.
+interface NativeGpuClient {
+  ResourcesCompleted(array<uint32> resource_ids);
+};
 interface NativeGpuService {
   QueryCapabilities() => (bool native_cuda, bool rtx);
   RequestPermission() => (PermissionStatus status, string error);
@@ -23,6 +26,7 @@ interface NativeGpuService {
       => (uint32 resource_id, string error);
   DispatchShared(array<uint32> resources, gpu.mojom.SyncToken ready,
                  string jobs) => (bool success, string result);
-  DestroySharedResource(uint32 resource_id);
+  DestroySharedResource(uint32 resource_id, gpu.mojom.SyncToken ready);
+  SetClient(pending_remote<NativeGpuClient> client);
   Close();
 };

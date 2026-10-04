@@ -568,3 +568,44 @@ Graph capture or elimination of GPU dispatches.
 `node rtx_cuda/tests/native-owned.browser.mjs` checks 40 frames of persistent
 CUDA state feeding OptiX into a real GPUTexture with one shared resource per
 frame, plus allocation limits, destroyed-buffer rejection and disposal.
+
+
+### Native canvas presentation
+
+`navigator.cuda.createCanvasSurface(device, width, height)` creates an opaque
+sRGB RGBA8 output surface. The returned `NativeGPUResource` has an opaque `id`,
+`available`, `present(context)` and `destroy()`. Its `texture` and `buffer` are
+null: it is a compositor surface, not a JavaScript WebGPU texture. It can be used
+as a `surface` argument in the same CUDA/OptiX `dispatchShared` batch as native
+simulation buffers.
+
+After dispatch resolves, `surface.present(context)` gives the configured,
+same-device, same-size opaque sRGB `GPUCanvasContext` that exact allocation.
+Chromium registers the native D3D texture as a SharedImage and sends it to the
+canvas compositor layer. There is no copy into `getCurrentTexture()` and no
+per-frame CPU GPU-completion wait. Presentation is queued, not acknowledged as
+physically scanned out. Normal compositor work and GPU fence waits still exist.
+
+Use two to four surfaces. A surface becomes `available` only after both CUDA
+completion and compositor release. GPU fence events notify the browser
+asynchronously; dispatch rejects surfaces still being rendered or presented.
+On reuse the compositor's release sync token orders access, and D3D SharedImage
+read/write fences order CUDA and compositor GPU work. Pending Graphite access is
+flushed before CUDA obtains exclusive write access. Destroying a presented
+surface defers broker destruction until release. Revocation/session loss aborts
+the document's native resources and invalidates their device.
+
+WebCuda wraps this in `native.createCanvasTarget(canvas, {context, buffers: 3})`:
+`target.acquire()` returns a surface or null for backpressure; submit a normal
+native batch using that surface, then `target.present(surface)`. Retry on the
+next animation frame when the pool is busy. On resize, destroy the old target,
+resize/reconfigure the canvas and create another target. `target.cancel(surface)`
+releases an acquired but unpresented frame. When shutting down a canvas, also
+unconfigure its context to release its last displayed frame.
+
+Snapshots and recording may perform their own explicit copies. The ordinary
+presentation path does not. The existing shared-GPUTexture API is unchanged.
+`node rtx_cuda/tests/native-canvas.browser.mjs` verifies actual displayed pixels,
+231 frames of bounded reuse, rejection while presented, video capture, 140 resize
+cycles, device loss, permission revocation and cleanup while
+rejecting any JavaScript WebGPU queue submission in the normal render loop.

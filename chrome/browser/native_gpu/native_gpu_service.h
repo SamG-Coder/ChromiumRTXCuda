@@ -13,6 +13,7 @@
 #include "content/public/browser/permission_controller.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "mojo/public/cpp/platform/platform_handle.h"
+#include "mojo/public/cpp/bindings/remote.h"
 #include "third_party/blink/public/mojom/native_gpu/native_gpu.mojom.h"
 namespace content {
 struct PermissionResult;
@@ -34,6 +35,10 @@ class NativeGpuService final
                const std::string&,
                ExecuteCallback) override;
   void Close() override;
+  void SetClient(mojo::PendingRemote<blink::mojom::NativeGpuClient>) override;
+  bool WatchCanvasCompletion(base::win::ScopedHandle,
+      const std::vector<base::UnguessableToken>&);
+  void CanvasCompleted(uint64_t);
   void CreateDLSSFrame(gpu::mojom::NativeGpuFrameDescriptorPtr,
                        CreateDLSSFrameCallback) override;
   void ProcessDLSSFrame(uint32_t,
@@ -49,7 +54,8 @@ class NativeGpuService final
                       const gpu::SyncToken&,
                       const std::string&,
                       DispatchSharedCallback) override;
-  void DestroySharedResource(uint32_t) override;
+  void DestroySharedResource(uint32_t, const gpu::SyncToken&) override;
+  void DrainRetiredResources();
   void RenderFrameHostStateChanged(
       content::RenderFrameHost*,
       content::RenderFrameHost::LifecycleState,
@@ -127,6 +133,11 @@ class NativeGpuService final
   std::map<uint32_t, SharedResource> shared_resources_;
   uint32_t next_shared_id_ = 0;
   bool interop_busy_ = false;
+  std::map<uint32_t, gpu::SyncToken> retired_resources_;
+  struct CanvasCompletion;
+  std::map<uint64_t, std::unique_ptr<CanvasCompletion>> canvas_completions_;
+  uint64_t next_canvas_completion_ = 0;
+  mojo::Remote<blink::mojom::NativeGpuClient> canvas_client_;
   bool frame_busy_ = false;
   uint32_t frame_id_ = 0;
   uint32_t next_frame_id_ = 0;

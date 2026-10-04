@@ -280,6 +280,10 @@ class GPU_COMMAND_BUFFER_CLIENT_EXPORT ClientSharedImage
   // SharedImageInterface::ImportSharedImage() instead, which returns an owning
   // reference, where the underlying shared image backing stays alive in gpu
   // process even if original ClientSharedImage goes away.
+  // The service owns this allocation; the caller must retain that owner until
+  // all consumers release the image.
+  static scoped_refptr<ClientSharedImage> CreateServiceOwned(
+      const Mailbox&, const SharedImageMetadata&, const SyncToken&);
   static scoped_refptr<ClientSharedImage> ImportUnowned(
       ExportedSharedImage exported_shared_image);
 

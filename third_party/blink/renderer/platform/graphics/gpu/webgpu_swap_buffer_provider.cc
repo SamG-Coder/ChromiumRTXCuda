@@ -71,6 +71,9 @@ viz::SharedImageFormat WebGPUSwapBufferProvider::Format() const {
 
 base::ByteSize WebGPUSwapBufferProvider::EstimatedSizeInBytes() const {
   base::ByteSize result;
+  if (native_image_) {
+    result += native_image_->EstimatedSizeInBytes();
+  }
   if (swap_buffer_pool_) {
     result += swap_buffer_pool_->EstimatedSizeInBytes();
   }
@@ -81,8 +84,12 @@ base::ByteSize WebGPUSwapBufferProvider::EstimatedSizeInBytes() const {
 }
 
 gfx::Size WebGPUSwapBufferProvider::Size() const {
-  if (current_swap_buffer_)
+  if (native_image_) {
+    return native_image_->size();
+  }
+  if (current_swap_buffer_) {
     return current_swap_buffer_->GetSharedImage()->size();
+  }
   return gfx::Size();
 }
 
@@ -106,7 +113,35 @@ void WebGPUSwapBufferProvider::ReleaseWGPUTextureAccessIfNeeded() {
   current_swap_buffer_->mailbox_texture = nullptr;
 }
 
+void WebGPUSwapBufferProvider::SetNativeImage(
+    scoped_refptr<gpu::ClientSharedImage> image,
+    const gpu::SyncToken& ready,
+    viz::ReleaseCallback release) {
+  DCHECK(!neutered_);
+  DiscardCurrentSwapBuffer();
+  native_image_ = std::move(image);
+  native_sync_token_ = ready;
+  native_release_ = std::move(release);
+  if (!layer_) {
+    layer_ = cc::TextureLayer::Create(this);
+    if (client_) {
+      client_->InitializeLayer(layer_.get());
+    }
+    layer_->SetIsDrawable(true);
+    if (client_) {
+      client_->SetNeedsCompositingUpdate();
+    }
+  }
+  layer_->SetNeedsDisplay();
+  layer_->SetContentsOpaque(true);
+  layer_->SetBlendBackgroundColor(false);
+}
+
 void WebGPUSwapBufferProvider::DiscardCurrentSwapBuffer() {
+  native_image_ = nullptr;
+  if (native_release_) {
+    std::move(native_release_).Run(native_sync_token_, false);
+  }
   // We're discarding the current texture without sending it to the compositor.
   if (current_swap_buffer_ && current_swap_buffer_->mailbox_texture) {
     current_swap_buffer_->mailbox_texture->SetNeedsPresent(false);
@@ -148,6 +183,10 @@ void WebGPUSwapBufferProvider::Neuter() {
 scoped_refptr<WebGPUMailboxTexture> WebGPUSwapBufferProvider::GetNewTexture(
     const wgpu::TextureDescriptor& desc,
     SkAlphaType alpha_mode) {
+  if (native_sync_token_.HasData()) {
+    DiscardCurrentSwapBuffer();
+    native_sync_token_ = gpu::SyncToken();
+  }
   DCHECK_EQ(desc.usage, usage_);
   DCHECK_EQ(desc.format, format_);
   DCHECK_EQ(desc.dimension, wgpu::TextureDimension::e2D);
@@ -286,7 +325,8 @@ WebGPUSwapBufferProvider::ExportCurrentSharedImage(
     gpu::SyncToken& sync_token,
     viz::ReleaseCallback* out_release_callback) {
   DCHECK(!neutered_);
-  if (!current_swap_buffer_ || neutered_ || !GetContextProviderWeakPtr()) {
+  if ((!current_swap_buffer_ && !native_image_) || neutered_ ||
+      !GetContextProviderWeakPtr()) {
     return nullptr;
   }
 
@@ -294,6 +334,14 @@ WebGPUSwapBufferProvider::ExportCurrentSharedImage(
     return nullptr;
   }
 
+  if (native_image_) {
+    sync_token = native_sync_token_;
+    *out_release_callback =
+        base::BindOnce(&WebGPUSwapBufferProvider::NativeMailboxReleased,
+                       weak_ptr_factory_.GetWeakPtr(), native_image_,
+                       std::move(native_release_));
+    return std::move(native_image_);
+  }
   scoped_refptr<gpu::ClientSharedImage> shared_image = GetCurrentSharedImage();
 
   ReleaseWGPUTextureAccessIfNeeded();
@@ -348,7 +396,8 @@ bool WebGPUSwapBufferProvider::CopyToVideoFrame(
     const gfx::ColorSpace& dst_color_space,
     WebGraphicsContext3DVideoFramePool::FrameReadyCallback callback) {
   DCHECK(!neutered_);
-  if (!current_swap_buffer_ || neutered_ || !GetContextProviderWeakPtr()) {
+  if ((!current_swap_buffer_ && !native_image_) || neutered_ ||
+      !GetContextProviderWeakPtr()) {
     return false;
   }
 
@@ -371,18 +420,34 @@ bool WebGPUSwapBufferProvider::CopyToVideoFrame(
 
   std::optional<gpu::SyncToken> optional_sync_token =
       frame_pool->CopyRGBATextureToVideoFrame(
-          current_swap_buffer_->GetSharedImage()->size(),
-          current_swap_buffer_->GetSharedImage(),
-          current_swap_buffer_->GetSyncToken(), dst_color_space,
-          std::move(callback));
+          GetCurrentSharedImage()->size(), GetCurrentSharedImage(),
+          native_image_ ? native_sync_token_
+                        : current_swap_buffer_->GetSyncToken(),
+          dst_color_space, std::move(callback));
   if (optional_sync_token.has_value()) {
     // Subsequent access to this swap buffer (either webgpu or compositor) must
     // wait for the copy operation to finish.
-    current_swap_buffer_->SetReleaseSyncToken(
-        std::move(optional_sync_token.value()));
+    if (native_image_) {
+      native_sync_token_ = *optional_sync_token;
+    } else {
+      current_swap_buffer_->SetReleaseSyncToken(*optional_sync_token);
+    }
     return true;
   }
   return false;
+}
+
+void WebGPUSwapBufferProvider::NativeMailboxReleased(
+    base::WeakPtr<WebGPUSwapBufferProvider> provider,
+    scoped_refptr<gpu::ClientSharedImage> image,
+    viz::ReleaseCallback release,
+    const gpu::SyncToken& token,
+    bool lost) {
+  if (provider && provider->front_buffer_shared_image_ == image) {
+    provider->front_buffer_shared_image_ = nullptr;
+    provider->front_buffer_sync_token_ = gpu::SyncToken();
+  }
+  std::move(release).Run(token, lost);
 }
 
 void WebGPUSwapBufferProvider::MailboxReleased(
@@ -403,8 +468,9 @@ void WebGPUSwapBufferProvider::MailboxReleased(
   // immediately destroy this buffer.
   swap_buffer->SetReleaseSyncToken(sync_token);
 
-  if (lost_resource)
+  if (lost_resource) {
     return;
+  }
 
   // This callback should never run on different thread. In case our thread was
   // destroyed, callback should be discarded (it can be discarded on any
@@ -459,6 +525,9 @@ WebGPUSwapBufferProvider::GetSharedImageUsagesForDisplay() {
 
 scoped_refptr<gpu::ClientSharedImage>
 WebGPUSwapBufferProvider::GetCurrentSharedImage() {
+  if (native_image_) {
+    return native_image_;
+  }
   return current_swap_buffer_ ? current_swap_buffer_->GetSharedImage()
                               : nullptr;
 }

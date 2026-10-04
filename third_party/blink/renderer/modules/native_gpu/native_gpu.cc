@@ -1,6 +1,7 @@
 // Copyright 2026 The Chromium Authors. BSD-style license; see LICENSE.
 #include "third_party/blink/renderer/modules/native_gpu/native_gpu.h"
 
+#include <algorithm>
 #include <array>
 
 #include "gpu/command_buffer/common/sync_token.h"
@@ -34,7 +35,8 @@ const char NativeGPU::kSupplementName[] = "NativeGPU";
 NativeGPU::NativeGPU(Navigator& navigator)
     : Supplement<Navigator>(navigator),
       ExecutionContextLifecycleObserver(navigator.DomWindow()),
-      remote_(navigator.DomWindow()) {}
+      remote_(navigator.DomWindow()),
+      canvas_receiver_(this, navigator.DomWindow()) {}
 NativeGPU* NativeGPU::cuda(Navigator& navigator) {
   auto* value = Supplement<Navigator>::From<NativeGPU>(navigator);
   if (!value) {
@@ -57,7 +59,11 @@ bool NativeGPU::EnsureRemote(ScriptState* state, ExceptionState& exception) {
     context->GetBrowserInterfaceBroker().GetInterface(
         remote_.BindNewPipeAndPassReceiver(
             context->GetTaskRunner(TaskType::kMiscPlatformAPI)));
+    remote_->SetClient(canvas_receiver_.BindNewPipeAndPassRemote(
+        context->GetTaskRunner(TaskType::kMiscPlatformAPI)));
     remote_.set_disconnect_handler(
+        BindOnce(&NativeGPU::Disconnected, WrapWeakPersistent(this)));
+    canvas_receiver_.set_disconnect_handler(
         BindOnce(&NativeGPU::Disconnected, WrapWeakPersistent(this)));
   }
   return true;
@@ -356,6 +362,21 @@ ScriptPromise<NativeGPUResource> NativeGPU::createSharedTexture(
   descriptor->usage = usage;
   return CreateResource(state, device, std::move(descriptor), exception);
 }
+ScriptPromise<NativeGPUResource> NativeGPU::createCanvasSurface(
+    ScriptState* state,
+    GPUDevice* device,
+    uint32_t width,
+    uint32_t height,
+    ExceptionState& exception) {
+  auto descriptor = gpu::mojom::blink::NativeGpuResourceDescriptor::New();
+  descriptor->texture = true;
+  descriptor->width = width;
+  descriptor->height = height;
+  descriptor->format = "rgba8unorm";
+  descriptor->usage = 31;
+  descriptor->canvas_mailbox = gpu::Mailbox::Generate();
+  return CreateResource(state, device, std::move(descriptor), exception);
+}
 ScriptPromise<NativeGPUResource> NativeGPU::CreateResource(
     ScriptState* state,
     GPUDevice* device,
@@ -398,7 +419,11 @@ ScriptPromise<NativeGPUResource> NativeGPU::CreateResource(
   auto* webgpu = context->ContextProvider().WebGPUInterface();
   GPUBuffer* buffer = nullptr;
   GPUTexture* texture = nullptr;
-  if (descriptor->texture) {
+  if (descriptor->canvas_mailbox) {
+    auto wire = webgpu->GetDeviceWireHandle(device->GetHandle().Get());
+    descriptor->device_id = wire.first;
+    descriptor->device_generation = wire.second;
+  } else if (descriptor->texture) {
     wgpu::TextureDescriptor desc;
     desc.size = {descriptor->width, descriptor->height, 1};
     desc.format = format;
@@ -432,6 +457,20 @@ ScriptPromise<NativeGPUResource> NativeGPU::CreateResource(
   webgpu->GenSyncTokenCHROMIUM(descriptor->ready.GetData());
   auto* resource =
       MakeGarbageCollected<NativeGPUResource>(this, device, buffer, texture);
+  if (descriptor->canvas_mailbox) {
+    gpu::SharedImageMetadata metadata{
+        viz::SinglePlaneFormat::kRGBA_8888,
+        gfx::Size(descriptor->width, descriptor->height),
+        gfx::ColorSpace::CreateSRGB(),
+        kTopLeft_GrSurfaceOrigin,
+        kOpaque_SkAlphaType,
+        gpu::SHARED_IMAGE_USAGE_DISPLAY_READ |
+            gpu::SHARED_IMAGE_USAGE_RASTER_READ |
+            gpu::SHARED_IMAGE_USAGE_WEBGPU_READ |
+            gpu::SHARED_IMAGE_USAGE_GLES2_READ};
+    resource->SetCanvasImage(gpu::ClientSharedImage::CreateServiceOwned(
+        *descriptor->canvas_mailbox, metadata, descriptor->ready));
+  }
   resources_.insert(resource);
   auto* resolver =
       MakeGarbageCollected<ScriptPromiseResolver<NativeGPUResource>>(
@@ -466,8 +505,8 @@ ScriptPromise<IDLString> NativeGPU::dispatchShared(
     return {};
   }
   GPUDevice* device = resources.empty() ? nullptr : resources[0]->device();
-  if (!device || resources.size() > 256 || jobs.length() > 900 * 1024 ||
-      !device->GetContextProviderWeakPtr()) {
+  if (dispatch_pending_ || !device || resources.size() > 256 ||
+      jobs.length() > 900 * 1024 || !device->GetContextProviderWeakPtr()) {
     exception.ThrowDOMException(
         DOMExceptionCode::kInvalidStateError,
         "Shared dispatch requires live resources and a live device.");
@@ -476,7 +515,7 @@ ScriptPromise<IDLString> NativeGPU::dispatchShared(
   Vector<uint32_t> ids;
   for (auto& resource : resources) {
     if (resource->owner() != this || resource->device() != device ||
-        !resource->id()) {
+        !resource->id() || !resource->PrepareDispatch()) {
       exception.ThrowDOMException(
           DOMExceptionCode::kInvalidStateError,
           "Resources must belong to this session and one WebGPU device.");
@@ -493,11 +532,20 @@ ScriptPromise<IDLString> NativeGPU::dispatchShared(
   auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLString>>(
       state, exception.GetContext());
   pending_.insert(resolver);
+  dispatch_pending_ = true;
+  for (auto& resource : resources) {
+    resource->SetGpuPending(true);
+  }
   remote_->DispatchShared(
       ids, ready, jobs,
       resolver->WrapCallbackInScriptScope(BindOnce(
-          [](NativeGPU* self, ScriptPromiseResolver<IDLString>* resolver,
-             bool success, const String& result) {
+          [](NativeGPU* self, const Vector<uint32_t>& ids,
+             ScriptPromiseResolver<IDLString>* resolver, bool success,
+             const String& result) {
+            self->dispatch_pending_ = false;
+            if (!success) {
+              self->ResourcesCompleted(ids);
+            }
             self->pending_.erase(resolver);
             if (success) {
               resolver->Resolve(result);
@@ -506,17 +554,38 @@ ScriptPromise<IDLString> NativeGPU::dispatchShared(
                   DOMExceptionCode::kOperationError, result));
             }
           },
-          WrapPersistent(this))));
+          WrapPersistent(this), ids)));
   return resolver->Promise();
+}
+void NativeGPU::ResourcesCompleted(const Vector<uint32_t>& ids) {
+  for (auto& resource : resources_) {
+    if (std::ranges::find(ids, resource->BrokerId()) != ids.end()) {
+      resource->SetGpuPending(false);
+    }
+  }
 }
 void NativeGPU::DestroyResource(NativeGPUResource* resource) {
   if (remote_.is_bound()) {
-    remote_->DestroySharedResource(resource->id());
+    auto provider = resource->device()->GetContextProviderWeakPtr();
+    if (!provider) {
+      close();
+      return;
+    }
+    auto* webgpu = provider->ContextProvider().WebGPUInterface();
+    if (resource->ReleaseToken().HasData()) {
+      webgpu->WaitSyncTokenCHROMIUM(resource->ReleaseToken().GetConstData());
+    }
+    resource->device()->FlushNow();
+    gpu::SyncToken ready;
+    webgpu->GenSyncTokenCHROMIUM(ready.GetData());
+    remote_->DestroySharedResource(resource->BrokerId(), ready);
   }
   resources_.erase(resource);
 }
 
 void NativeGPU::Disconnected() {
+  dispatch_pending_ = false;
+  canvas_receiver_.reset();
   remote_.reset();
   for (auto& resolver : pending_) {
     resolver->Reject(MakeGarbageCollected<DOMException>(
@@ -539,11 +608,13 @@ void NativeGPU::close() {
   Disconnected();
 }
 void NativeGPU::ContextDestroyed() {
+  canvas_receiver_.reset();
   remote_.reset();
   pending_.clear();
 }
 void NativeGPU::Trace(Visitor* visitor) const {
   visitor->Trace(remote_);
+  visitor->Trace(canvas_receiver_);
   visitor->Trace(pending_);
   visitor->Trace(frame_);
   visitor->Trace(resources_);

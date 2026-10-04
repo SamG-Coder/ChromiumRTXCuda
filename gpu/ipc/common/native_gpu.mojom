@@ -1,6 +1,7 @@
 // Copyright 2026 The Chromium Authors. BSD-style license; see LICENSE.
 module gpu.mojom;
 import "gpu/ipc/common/sync_token.mojom";
+import "gpu/ipc/common/mailbox.mojom";
 import "mojo/public/mojom/base/unguessable_token.mojom";
 
 // Renderer-visible identifiers refer only to objects in that renderer's wire
@@ -30,6 +31,7 @@ struct NativeGpuResourceDescriptor {
   uint32 device_generation;
   uint32 id;
   uint32 generation;
+  Mailbox? canvas_mailbox;
   bool texture;
   uint64 size;
   uint32 usage;
@@ -59,6 +61,8 @@ struct NativeGpuTextureResult {
   string error;
   array<handle<platform>> fences;
   array<uint64> fence_values;
+  // Trusted GPU-to-browser completion events; never sent to the renderer.
+  array<handle<platform>> completion_events;
   uint32 adapter_luid_low;
   int32 adapter_luid_high;
 };

@@ -73,6 +73,9 @@ class PLATFORM_EXPORT WebGPUSwapBufferProvider
   cc::Layer* CcLayer();
   void Neuter();
   void DiscardCurrentSwapBuffer();
+  void SetNativeImage(scoped_refptr<gpu::ClientSharedImage>,
+                      const gpu::SyncToken&,
+                      viz::ReleaseCallback);
   scoped_refptr<WebGPUMailboxTexture> GetNewTexture(
       const wgpu::TextureDescriptor& desc,
       SkAlphaType alpha_type);
@@ -121,6 +124,10 @@ class PLATFORM_EXPORT WebGPUSwapBufferProvider
   // Returns the SharedImage (if any) in the front buffer
   scoped_refptr<gpu::ClientSharedImage> GetFrontBufferSharedImage();
   gpu::SyncToken GetFrontBufferSyncToken();
+  scoped_refptr<gpu::ClientSharedImage> GetNativeImage() {
+    return native_image_;
+  }
+  gpu::SyncToken GetNativeSyncToken() { return native_sync_token_; }
 
   gfx::HDRMetadata GetHDRMetadata() { return hdr_metadata_; }
 
@@ -152,6 +159,11 @@ class PLATFORM_EXPORT WebGPUSwapBufferProvider
     ~SwapBuffer() override;
   };
 
+  static void NativeMailboxReleased(base::WeakPtr<WebGPUSwapBufferProvider>,
+                                    scoped_refptr<gpu::ClientSharedImage>,
+                                    viz::ReleaseCallback,
+                                    const gpu::SyncToken&,
+                                    bool);
   static void MailboxReleased(base::WeakPtr<WebGPUSwapBufferProvider> provider,
                               base::PlatformThreadRef thread_ref,
                               scoped_refptr<SwapBuffer> swap_buffer,
@@ -183,6 +195,9 @@ class PLATFORM_EXPORT WebGPUSwapBufferProvider
   // SwapBuffer resources.
   std::unique_ptr<gpu::SharedImagePool<SwapBuffer>> swap_buffer_pool_;
   scoped_refptr<SwapBuffer> current_swap_buffer_;
+  scoped_refptr<gpu::ClientSharedImage> native_image_;
+  gpu::SyncToken native_sync_token_;
+  viz::ReleaseCallback native_release_;
 
   scoped_refptr<gpu::ClientSharedImage> front_buffer_shared_image_;
   gpu::SyncToken front_buffer_sync_token_;

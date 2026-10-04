@@ -207,7 +207,7 @@ scoped_refptr<StaticBitmapImage> GPUCanvasContext::GetImage() {
 
   // If there is no current texture, return a snapshot of the front buffer if
   // possible.
-  auto front_buffer_texture = GetFrontBufferMailboxTexture();
+  auto front_buffer_texture = GetFrontBufferMailboxTexture(true);
   if (!front_buffer_texture) {
     return nullptr;
   }
@@ -273,7 +273,8 @@ GPUCanvasContext::PaintRenderingResultsToSnapshot(
   wgpu::Texture texture;
 
   scoped_refptr<WebGPUMailboxTexture> front_buffer_texture;
-  if (source_buffer == kFrontBuffer) {
+  if (source_buffer == kFrontBuffer ||
+      (!texture_ && swap_buffers_->GetNativeSyncToken().HasData())) {
 #if BUILDFLAG(IS_LINUX)
     // By returning false here the canvas will show up as black in the scenarios
     // that copy the front buffer, such as printing.
@@ -282,7 +283,8 @@ GPUCanvasContext::PaintRenderingResultsToSnapshot(
     return nullptr;
 #else
     // Create a WebGPU texture backed by the front buffer's SharedImage.
-    front_buffer_texture = GetFrontBufferMailboxTexture();
+    front_buffer_texture =
+        GetFrontBufferMailboxTexture(source_buffer != kFrontBuffer);
     if (!front_buffer_texture) {
       return resource_provider->Snapshot();
     }
@@ -758,8 +760,11 @@ GPUTexture* GPUCanvasContext::getCurrentTexture(
 }
 
 scoped_refptr<WebGPUMailboxTexture>
-GPUCanvasContext::GetFrontBufferMailboxTexture() {
-  auto front_buffer_si = swap_buffers_->GetFrontBufferSharedImage();
+GPUCanvasContext::GetFrontBufferMailboxTexture(bool prefer_native_back_buffer) {
+  auto native_image =
+      prefer_native_back_buffer ? swap_buffers_->GetNativeImage() : nullptr;
+  auto front_buffer_si =
+      native_image ? native_image : swap_buffers_->GetFrontBufferSharedImage();
   if (!front_buffer_si) {
     return nullptr;
   }
@@ -775,13 +780,39 @@ GPUCanvasContext::GetFrontBufferMailboxTexture() {
       .usage = front_buffer_usage,
       .size = {base::checked_cast<uint32_t>(front_buffer_si->size().width()),
                base::checked_cast<uint32_t>(front_buffer_si->size().height())},
-      .format = swap_buffers_->TextureFormat(),
+      .format = front_buffer_si->format() == viz::SinglePlaneFormat::kRGBA_8888
+                    ? wgpu::TextureFormat::RGBA8Unorm
+                    : swap_buffers_->TextureFormat(),
   };
   desc.nextInChain = &front_buffer_usage_desc;
 
   return WebGPUMailboxTexture::FromExistingSharedImage(
       device_->GetDawnControlClient(), device_->GetHandle(), desc,
-      front_buffer_si, swap_buffers_->GetFrontBufferSyncToken());
+      front_buffer_si,
+      native_image ? swap_buffers_->GetNativeSyncToken()
+                   : swap_buffers_->GetFrontBufferSyncToken());
+}
+
+bool GPUCanvasContext::PresentNativeImage(
+    GPUDevice* device,
+    scoped_refptr<gpu::ClientSharedImage> image,
+    const gpu::SyncToken& ready,
+    viz::ReleaseCallback release,
+    ExceptionState& exception) {
+  if (!configured_ || !swap_buffers_ || device_ != device ||
+      IsGPUDeviceDestroyed() || !Host() || Host()->Size() != image->size() ||
+      alpha_mode_ != V8GPUCanvasAlphaMode::Enum::kOpaque ||
+      color_space_ != PredefinedColorSpace::kSRGB) {
+    exception.ThrowDOMException(
+        DOMExceptionCode::kInvalidStateError,
+        "Native presentation requires a live, same-device, opaque sRGB canvas "
+        "with matching dimensions.");
+    return false;
+  }
+  ReplaceDrawingBuffer(false);
+  swap_buffers_->SetNativeImage(std::move(image), ready, std::move(release));
+  DidDraw(CanvasPerformanceMonitor::DrawType::kOther);
+  return true;
 }
 
 void GPUCanvasContext::ReplaceDrawingBuffer(bool destroy_swap_buffers) {
@@ -1024,8 +1055,9 @@ scoped_refptr<StaticBitmapImage> GPUCanvasContext::SnapshotInternal(
       size, GetSharedImageFormat(), GetAlphaType(), GetColorSpace(),
       swap_buffers_->GetHDRMetadata(),
       swap_buffers_->GetSharedImageUsagesForDisplay());
-  if (!resource_provider)
+  if (!resource_provider) {
     return nullptr;
+  }
 
   if (!CopyTextureToResourceProvider(texture, resource_provider.get())) {
     return nullptr;

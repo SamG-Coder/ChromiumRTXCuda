@@ -5,5 +5,7 @@ interface NativeGPUResource {
   readonly attribute GPUTexture? texture;
   // Opaque document identifier, never a native address or OS handle.
   readonly attribute unsigned long id;
+  readonly attribute boolean available;
+  [RaisesException] undefined present(GPUCanvasContext context);
   undefined destroy();
 };

@@ -1857,6 +1857,43 @@ void D3DImageBacking::EndDCompTextureAccess() {
   }
 }
 
+std::optional<std::vector<scoped_refptr<gfx::D3DSharedFence>>>
+D3DImageBacking::BeginAccessNativeCanvas() {
+  AutoLock auto_lock(this);
+  if (persistent_graphite_dawn_access_) {
+    InvalidatePersistentGraphiteDawnAccess();
+  }
+  if (!ValidateBeginAccess(true)) {
+    return std::nullopt;
+  }
+  const bool first_external_access =
+      texture_d3d11_device_ &&
+      !signaled_fence_map_.contains(D3DAccessObject{texture_d3d11_device_});
+  auto fences = GetPendingWaitFences(
+      D3DAccessObject{Microsoft::WRL::ComPtr<ID3D11Device>()}, nullptr, true);
+  if (!fences) {
+    return std::nullopt;
+  }
+  if (first_external_access) {
+    // Submit the lazily inserted D3D11 fence even if this canvas has not yet
+    // participated in a compositor frame. Flush submits; it does not wait.
+    Microsoft::WRL::ComPtr<ID3D11DeviceContext> context;
+    texture_d3d11_device_->GetImmediateContext(&context);
+    context->Flush();
+  }
+  BeginAccessCommon(true);
+  return fences;
+}
+void D3DImageBacking::EndAccessNativeCanvas(
+    scoped_refptr<gfx::D3DSharedFence> fence) {
+  AutoLock auto_lock(this);
+  if (fence) {
+    EndAccessCommon({std::move(fence)});
+  } else {
+    EndAccessCommon({});
+  }
+}
+
 std::optional<scoped_refptr<gfx::D3DSharedFence>>
 D3DImageBacking::BeginAccessWebNN() {
   AutoLock auto_lock(this);

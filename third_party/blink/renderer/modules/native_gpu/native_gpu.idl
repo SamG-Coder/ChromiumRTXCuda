@@ -18,6 +18,8 @@ interface NativeGPU {
   [CallWith=ScriptState, RaisesException] Promise<NativeGPUResource> createSharedTexture(
       GPUDevice device, [EnforceRange] unsigned long width, [EnforceRange] unsigned long height,
       DOMString format, [EnforceRange] unsigned long usage);
+  [CallWith=ScriptState, RaisesException] Promise<NativeGPUResource> createCanvasSurface(
+      GPUDevice device, [EnforceRange] unsigned long width, [EnforceRange] unsigned long height);
   [CallWith=ScriptState, RaisesException] Promise<DOMString> dispatchShared(
       sequence<NativeGPUResource> resources, DOMString jobs);
 };

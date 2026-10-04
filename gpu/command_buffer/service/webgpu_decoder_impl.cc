@@ -45,6 +45,11 @@
 #include "gpu/command_buffer/service/isolation_key_provider.h"
 #include "gpu/command_buffer/service/shared_context_state.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_factory.h"
+#if BUILDFLAG(IS_WIN)
+#include "gpu/command_buffer/service/dxgi_shared_handle_manager.h"
+#include "gpu/command_buffer/service/shared_image/d3d_image_backing.h"
+#include "ui/gfx/win/d3d_shared_fence.h"
+#endif
 #include "gpu/command_buffer/service/shared_image/shared_image_format_service_utils.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_manager.h"
 #include "gpu/command_buffer/service/shared_image/shared_image_representation.h"
@@ -417,6 +422,8 @@ class WebGPUDecoderImpl final : public WebGPUDecoder {
 
   scoped_refptr<SharedContextState> shared_context_state_;
 
+  raw_ptr<SharedImageManager> native_image_manager_;
+  MemoryTypeTracker native_image_tracker_;
   std::unique_ptr<SharedImageRepresentationFactory>
       shared_image_representation_factory_;
 
@@ -876,8 +883,9 @@ class WebGPUDecoderImpl final : public WebGPUDecoder {
     }
 
     void WaitForSemaphores(std::vector<GrBackendSemaphore> semaphores) {
-      if (semaphores.empty())
+      if (semaphores.empty()) {
         return;
+      }
 
       bool wait_result = shared_context_state_->gr_context()->wait(
           semaphores.size(), semaphores.data(),
@@ -886,8 +894,9 @@ class WebGPUDecoderImpl final : public WebGPUDecoder {
     }
 
     void SignalSemaphores(std::vector<GrBackendSemaphore> semaphores) {
-      if (semaphores.empty())
+      if (semaphores.empty()) {
         return;
+      }
 
       GrFlushInfo flush_info = {
           .fNumSemaphores = semaphores.size(),
@@ -1049,6 +1058,9 @@ class WebGPUDecoderImpl final : public WebGPUDecoder {
   };
   std::map<base::UnguessableToken, std::unique_ptr<NativeFrame>> native_frames_;
   struct NativeResource {
+    raw_ptr<D3DImageBacking> canvas_backing = nullptr;
+    std::unique_ptr<SharedImageRepresentationFactoryRef> canvas_ref;
+    scoped_refptr<gfx::D3DSharedFence> canvas_fence;
     wgpu::Device device;
     wgpu::SharedBufferMemory buffer_memory;
     wgpu::SharedTextureMemory texture_memory;
@@ -1068,6 +1080,14 @@ class WebGPUDecoderImpl final : public WebGPUDecoder {
       }
     }
     ~NativeResource() {
+      if (canvas_backing && !active) {
+        // Cancellation still closes the backing's exclusive access.
+        Abort();
+        canvas_fence->Update(UINT64_MAX);
+        canvas_backing->EndAccessNativeCanvas(canvas_fence);
+      }
+      // canvas_ref owns the backing and is destroyed before this raw_ptr.
+      canvas_backing = nullptr;
       if (buffer) {
         if (active) {
           wgpu::SharedBufferMemoryEndAccessState end;
@@ -1086,6 +1106,12 @@ class WebGPUDecoderImpl final : public WebGPUDecoder {
   };
   std::map<base::UnguessableToken, std::unique_ptr<NativeResource>>
       native_resources_;
+  struct NativeCompletion {
+    Microsoft::WRL::ComPtr<ID3D12Fence> fence;
+    base::win::ScopedHandle event;
+    uint64_t value;
+  };
+  std::vector<NativeCompletion> native_completions_;
 #endif
   bool destroyed_ = false;
 
@@ -1121,8 +1147,9 @@ std::unique_ptr<WebGPUDecoder> CreateWebGPUDecoderImpl(
     const DawnCacheOptions& dawn_cache_options,
     IsolationKeyProvider* isolation_key_provider) {
   // Construct a Dawn caching interface if the Dawn configurations enables it.
-  // If a handle was set, pass the relevant handle and CacheBlob callback so that
-  // writing to disk is enabled. Otherwise pass an incognito in-memory version.
+  // If a handle was set, pass the relevant handle and CacheBlob callback so
+  // that writing to disk is enabled. Otherwise pass an incognito in-memory
+  // version.
   std::unique_ptr<webgpu::DawnCachingInterface> dawn_caching_interface =
       nullptr;
   if (auto* caching_interface_factory =
@@ -1158,6 +1185,8 @@ WebGPUDecoderImpl::WebGPUDecoderImpl(
     IsolationKeyProvider* isolation_key_provider)
     : WebGPUDecoder(client, command_buffer_service, outputter),
       shared_context_state_(std::move(shared_context_state)),
+      native_image_manager_(shared_image_manager),
+      native_image_tracker_(memory_tracker),
       shared_image_representation_factory_(
           std::make_unique<SharedImageRepresentationFactory>(
               shared_image_manager,
@@ -1426,6 +1455,9 @@ mojom::NativeGpuTextureResultPtr WebGPUDecoderImpl::NativeTextureCommand(
 mojom::NativeGpuTextureResultPtr WebGPUDecoderImpl::NativeResourceCommand(
     const mojom::NativeGpuTextureCommand& command) {
   using Action = mojom::NativeGpuTextureAction;
+  std::erase_if(native_completions_, [](const NativeCompletion& completion) {
+    return completion.fence->GetCompletedValue() >= completion.value;
+  });
   auto result = mojom::NativeGpuTextureResult::New();
   result->error =
       "CUDA sharing requires a live D3D12 WebGPU device and valid resources.";
@@ -1479,7 +1511,64 @@ mojom::NativeGpuTextureResultPtr WebGPUDecoderImpl::NativeResourceCommand(
       wgpu::SharedFenceDescriptor fence_desc;
       fence_desc.nextInChain = &fence_handle;
       resource->cuda_fence = device.ImportSharedFence(&fence_desc);
-      if (desc->texture) {
+      if (desc->canvas_mailbox) {
+        if (!desc->texture || desc->format != "rgba8unorm" ||
+            desc->canvas_mailbox->IsZero() || !desc->width || !desc->height ||
+            desc->width > 8192 || desc->height > 8192 ||
+            !shared_context_state_->GetD3D11Device()) {
+          return result;
+        }
+        HANDLE duplicate = nullptr;
+        if (!DuplicateHandle(GetCurrentProcess(),
+                             command.handles[0].GetHandle().get(),
+                             GetCurrentProcess(), &duplicate, 0, FALSE,
+                             DUPLICATE_SAME_ACCESS)) {
+          return result;
+        }
+        auto state =
+            native_image_manager_->dxgi_shared_handle_manager()
+                ->GetOrCreateSharedHandleState(
+                    gfx::DXGIHandleToken(), base::win::ScopedHandle(duplicate),
+                    shared_context_state_->GetD3D11Device());
+        if (!state) {
+          return result;
+        }
+        auto texture = state->GetOrCreateD3D11Texture(
+            shared_context_state_->GetD3D11Device());
+        if (!texture) {
+          return result;
+        }
+        D3D11_TEXTURE2D_DESC actual;
+        texture->GetDesc(&actual);
+        if (actual.Width != desc->width || actual.Height != desc->height ||
+            actual.Format != DXGI_FORMAT_R8G8B8A8_UNORM) {
+          return result;
+        }
+        SharedImageInfo info(
+            viz::SinglePlaneFormat::kRGBA_8888,
+            gfx::Size(desc->width, desc->height), gfx::ColorSpace::CreateSRGB(),
+            kTopLeft_GrSurfaceOrigin, kOpaque_SkAlphaType,
+            SHARED_IMAGE_USAGE_DISPLAY_READ | SHARED_IMAGE_USAGE_RASTER_READ |
+                SHARED_IMAGE_USAGE_WEBGPU_READ | SHARED_IMAGE_USAGE_GLES2_READ,
+            "Native CUDA canvas");
+        auto backing = D3DImageBacking::Create(
+            *desc->canvas_mailbox, info, std::move(texture), std::move(state),
+            shared_context_state_->GetGLFormatCaps(), GL_TEXTURE_2D, 0);
+        if (!backing) {
+          return result;
+        }
+        backing->SetCleared();
+        auto* canvas_backing = backing.get();
+        resource->canvas_ref = native_image_manager_->Register(
+            std::move(backing), &native_image_tracker_);
+        resource->canvas_fence = gfx::D3DSharedFence::CreateFromUnownedHandle(
+            command.handles[1].GetHandle().get());
+        if (!resource->canvas_ref || !resource->canvas_fence) {
+          return result;
+        }
+        resource->canvas_backing = canvas_backing;
+        resource->active = true;
+      } else if (desc->texture) {
         wgpu::TextureFormat format = wgpu::TextureFormat::Undefined;
         if (desc->format == "rgba8unorm") {
           format = wgpu::TextureFormat::RGBA8Unorm;
@@ -1592,6 +1681,22 @@ mojom::NativeGpuTextureResultPtr WebGPUDecoderImpl::NativeResourceCommand(
         if (!resource.active) {
           return result;
         }
+        if (resource.canvas_backing) {
+          auto fences = resource.canvas_backing->BeginAccessNativeCanvas();
+          if (!fences) {
+            return result;
+          }
+          resource.active = false;
+          for (const auto& fence : *fences) {
+            auto handle = fence->CloneSharedHandle();
+            if (!handle.is_valid()) {
+              return result;
+            }
+            result->fences.emplace_back(std::move(handle));
+            result->fence_values.push_back(fence->GetFenceValue());
+          }
+          continue;
+        }
         auto export_fences = [&](auto& end) {
           if (!end.initialized || end.fenceCount != end.signaledValueCount ||
               end.fenceCount > 4) {
@@ -1613,8 +1718,8 @@ mojom::NativeGpuTextureResultPtr WebGPUDecoderImpl::NativeResourceCommand(
               // Imported CUDA fences can be separate HANDLEs to the same
               // kernel object. Numeric equality alone misses those aliases.
               for (size_t j = 0; j < result->fences.size(); ++j) {
-                if (CompareObjectHandles(
-                        shared.handle, result->fences[j].GetHandle().get())) {
+                if (CompareObjectHandles(shared.handle,
+                                         result->fences[j].GetHandle().get())) {
                   retained_fences.push_back(fences[i]);
                   found = exported_fences.emplace(shared.handle, j).first;
                   break;
@@ -1660,6 +1765,12 @@ mojom::NativeGpuTextureResultPtr WebGPUDecoderImpl::NativeResourceCommand(
         if (resource.active || !command.fence_value) {
           return result;
         }
+        if (resource.canvas_backing) {
+          resource.canvas_fence->Update(command.fence_value);
+          resource.canvas_backing->EndAccessNativeCanvas(resource.canvas_fence);
+          resource.active = true;
+          continue;
+        }
         // CUDA signals this value on its stream. Dawn queues a GPU wait; no
         // CPU fence wait or pixel readback is involved in the handoff.
         if (resource.buffer) {
@@ -1691,6 +1802,38 @@ mojom::NativeGpuTextureResultPtr WebGPUDecoderImpl::NativeResourceCommand(
       }
     }
   }
+  if (command.action == Action::kAcquireResources) {
+    for (const auto& token : command.resources) {
+      auto& resource = *native_resources_.at(token);
+      if (!resource.canvas_backing) {
+        continue;
+      }
+      if (native_completions_.size() >= 256) {
+        return result;
+      }
+      base::win::ScopedHandle event(
+          CreateEventW(nullptr, TRUE, FALSE, nullptr));
+      if (!event.is_valid() ||
+          FAILED(resource.completion_fence->SetEventOnCompletion(
+              command.fence_value, event.get()))) {
+        return result;
+      }
+      // Keep the registered event alive even if duplication fails or the
+      // document cancels its watch before the GPU reaches this fence.
+      native_completions_.push_back(
+          {resource.completion_fence, std::move(event), command.fence_value});
+      HANDLE duplicate = nullptr;
+      if (!DuplicateHandle(GetCurrentProcess(),
+                           native_completions_.back().event.get(),
+                           GetCurrentProcess(), &duplicate, 0, FALSE,
+                           DUPLICATE_SAME_ACCESS)) {
+        return result;
+      }
+      result->completion_events.emplace_back(
+          base::win::ScopedHandle(duplicate));
+      break;  // Every resource in this batch uses the same CUDA timeline.
+    }
+  }
   result->success = true;
   result->error.clear();
   return result;
@@ -1720,6 +1863,7 @@ void WebGPUDecoderImpl::Destroy(bool have_context) {
     resource->Abort();
   }
   native_resources_.clear();
+  native_completions_.clear();
 #endif
 
   // Destroy all known devices to ensure that any service-side objects holding

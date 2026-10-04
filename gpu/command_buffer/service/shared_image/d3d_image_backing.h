@@ -166,6 +166,11 @@ class GPU_GLES2_EXPORT D3DImageBacking final
 
   base::win::ScopedHandle GetD3D12HeapHandle() const;
 
+  // Exclusive CUDA access participates in the same reader/writer fence graph
+  // as the compositor. No CPU completion wait is necessary.
+  std::optional<std::vector<scoped_refptr<gfx::D3DSharedFence>>>
+  BeginAccessNativeCanvas();
+  void EndAccessNativeCanvas(scoped_refptr<gfx::D3DSharedFence> fence);
   std::optional<scoped_refptr<gfx::D3DSharedFence>> BeginAccessWebNN();
   void EndAccessWebNN(scoped_refptr<gfx::D3DSharedFence> signaled_fence);
 

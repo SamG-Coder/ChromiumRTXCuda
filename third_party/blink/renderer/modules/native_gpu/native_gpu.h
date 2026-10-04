@@ -7,6 +7,7 @@
 #include "third_party/blink/renderer/platform/bindings/script_wrappable.h"
 #include "third_party/blink/renderer/platform/heap/collection_support/heap_hash_set.h"
 #include "third_party/blink/renderer/platform/mojo/heap_mojo_remote.h"
+#include "third_party/blink/renderer/platform/mojo/heap_mojo_receiver.h"
 #include "third_party/blink/renderer/platform/supplementable.h"
 namespace blink {
 class Navigator;
@@ -16,7 +17,8 @@ class GPUDevice;
 class GPUTexture;
 class NativeGPU final : public ScriptWrappable,
                         public Supplement<Navigator>,
-                        public ExecutionContextLifecycleObserver {
+                        public ExecutionContextLifecycleObserver,
+                        public mojom::blink::NativeGpuClient {
   DEFINE_WRAPPERTYPEINFO();
 
  public:
@@ -62,11 +64,18 @@ class NativeGPU final : public ScriptWrappable,
                                                        const String&,
                                                        uint32_t,
                                                        ExceptionState&);
+  ScriptPromise<NativeGPUResource> createCanvasSurface(ScriptState*,
+                                                       GPUDevice*,
+                                                       uint32_t,
+                                                       uint32_t,
+                                                       ExceptionState&);
   ScriptPromise<IDLString> dispatchShared(
       ScriptState*,
       const HeapVector<Member<NativeGPUResource>>&,
       const String&,
       ExceptionState&);
+  void ResourcesCompleted(const Vector<uint32_t>&) override;
+  bool DispatchPending() const { return dispatch_pending_; }
   void DestroyResource(NativeGPUResource*);
   void ContextDestroyed() override;
   void Trace(Visitor*) const override;
@@ -83,9 +92,11 @@ class NativeGPU final : public ScriptWrappable,
       gpu::mojom::blink::NativeGpuResourceDescriptorPtr,
       ExceptionState&);
   HeapMojoRemote<mojom::blink::NativeGpuService> remote_;
+  HeapMojoReceiver<mojom::blink::NativeGpuClient, NativeGPU> canvas_receiver_;
   HeapHashSet<Member<ScriptPromiseResolverBase>> pending_;
   Member<NativeGPUFrame> frame_;
   HeapHashSet<Member<NativeGPUResource>> resources_;
+  bool dispatch_pending_ = false;
 };
 }  // namespace blink
 #endif

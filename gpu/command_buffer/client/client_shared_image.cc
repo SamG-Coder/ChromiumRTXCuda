@@ -764,6 +764,15 @@ ExportedSharedImage ClientSharedImage::Export(bool with_buffer_handle) {
                              texture_target_, is_software_);
 }
 
+scoped_refptr<ClientSharedImage> ClientSharedImage::CreateServiceOwned(
+    const Mailbox& mailbox,
+    const SharedImageMetadata& metadata,
+    const SyncToken& ready) {
+  return ImportUnowned(ExportedSharedImage(mailbox, metadata, ready, {},
+                                           "Native CUDA canvas", std::nullopt,
+                                           std::nullopt, GL_TEXTURE_2D, false));
+}
+
 scoped_refptr<ClientSharedImage> ClientSharedImage::ImportUnowned(
     ExportedSharedImage exported_shared_image) {
   return base::WrapRefCounted<ClientSharedImage>(

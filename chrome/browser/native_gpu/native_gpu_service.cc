@@ -3,6 +3,8 @@
 
 #include <windows.h>
 
+#include <algorithm>
+
 #include "base/base_paths.h"
 #include "base/command_line.h"
 #include "base/containers/span.h"
@@ -15,6 +17,7 @@
 #include "base/strings/string_number_conversions.h"
 #include "base/task/thread_pool.h"
 #include "base/values.h"
+#include "base/win/object_watcher.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/gpu_utils.h"
 #include "content/public/browser/permission_controller.h"
@@ -31,6 +34,58 @@
 #include "third_party/blink/public/mojom/page/page_visibility_state.mojom.h"
 
 namespace native_gpu {
+struct NativeGpuService::CanvasCompletion final
+    : base::win::ObjectWatcher::Delegate {
+  // The watcher must be destroyed before closing its event handle.
+  base::win::ScopedHandle event;
+  std::vector<uint32_t> ids;
+  base::OnceClosure callback;
+  base::win::ObjectWatcher watcher;
+  void OnObjectSignaled(HANDLE) override { std::move(callback).Run(); }
+};
+void NativeGpuService::SetClient(
+    mojo::PendingRemote<blink::mojom::NativeGpuClient> client) {
+  if (canvas_client_.is_bound() || stopped_) {
+    StopProcess();
+    return;
+  }
+  canvas_client_.Bind(std::move(client));
+}
+bool NativeGpuService::WatchCanvasCompletion(
+    base::win::ScopedHandle event,
+    const std::vector<base::UnguessableToken>& tokens) {
+  if (!canvas_client_.is_bound() || canvas_completions_.size() >= 256 ||
+      !event.is_valid()) {
+    return false;
+  }
+  const uint64_t serial = ++next_canvas_completion_;
+  auto completion = std::make_unique<CanvasCompletion>();
+  completion->event = std::move(event);
+  for (const auto& [id, resource] : shared_resources_) {
+    if (std::ranges::find(tokens, resource.token) != tokens.end()) {
+      completion->ids.push_back(id);
+    }
+  }
+  completion->callback = base::BindOnce(&NativeGpuService::CanvasCompleted,
+                                        weak_factory_.GetWeakPtr(), serial);
+  if (!completion->watcher.StartWatchingOnce(completion->event.get(),
+                                             completion.get())) {
+    return false;
+  }
+  canvas_completions_.emplace(serial, std::move(completion));
+  return true;
+}
+void NativeGpuService::CanvasCompleted(uint64_t serial) {
+  auto found = canvas_completions_.find(serial);
+  if (found == canvas_completions_.end()) {
+    return;
+  }
+  auto ids = std::move(found->second->ids);
+  canvas_completions_.erase(found);
+  if (!stopped_ && canvas_client_.is_bound()) {
+    canvas_client_->ResourcesCompleted(ids);
+  }
+}
 namespace {
 constexpr uint32_t kMessageLimit = 900 * 1024;
 auto Descriptor() {
@@ -516,6 +571,9 @@ void NativeGpuService::StopProcess() {
         base::BindOnce([](gpu::mojom::NativeGpuTextureResultPtr) {}));
   }
   shared_resources_.clear();
+  retired_resources_.clear();
+  canvas_completions_.clear();
+  canvas_client_.reset();
   interop_busy_ = false;
   DestroySharedFrame();
   if (job_.is_valid()) {
@@ -798,7 +856,10 @@ void NativeGpuService::CreateSharedResource(
   const uint32_t texel_bytes = desc->format == "rgba32float"   ? 16
                                : desc->format == "rgba16float" ? 8
                                                                : 4;
-  if (!ValidInteropDevice(desc->ready) || stopped_ || interop_busy_ ||
+  if ((desc->canvas_mailbox &&
+       (!desc->texture || desc->format != "rgba8unorm" ||
+        desc->canvas_mailbox->IsZero())) ||
+      !ValidInteropDevice(desc->ready) || stopped_ || interop_busy_ ||
       shared_resources_.size() >= 256 || !desc->usage ||
       (desc->texture
            ? (!format || !desc->width || !desc->height || desc->width > 8192 ||
@@ -881,6 +942,7 @@ void NativeGpuService::CreateSharedResource(
                         std::move(callback).Run(0, result->error);
                         return;
                       }
+                      self->DrainRetiredResources();
                       std::move(callback).Run(id, "");
                     },
                     self, id, std::move(callback)));
@@ -913,7 +975,8 @@ void NativeGpuService::DispatchShared(const std::vector<uint32_t>& ids,
   SharedResource* first = nullptr;
   for (auto id : ids) {
     auto found = shared_resources_.find(id);
-    if (found == shared_resources_.end() || selected.contains(id)) {
+    if (found == shared_resources_.end() || selected.contains(id) ||
+        retired_resources_.contains(id)) {
       std::move(callback).Run(
           false, "Unknown, destroyed, or duplicate shared resource.");
       return;
@@ -946,7 +1009,8 @@ void NativeGpuService::DispatchShared(const std::vector<uint32_t>& ids,
         return;
       }
       // Native allocations are session-local host IDs, never OS handles or
-      // pointers. The host resolves them against this document's allocation map.
+      // pointers. The host resolves them against this document's allocation
+      // map.
       if (arg.GetDict().contains("nativeBuffer")) {
         auto id = arg.GetDict().FindInt("nativeBuffer");
         if (!id || *id <= 0 || arg.GetDict().contains("buffer") ||
@@ -997,13 +1061,12 @@ void NativeGpuService::ReleaseInteropReply(
     return;
   }
   const size_t wait_fence_count = result->fences.size();
-  CallHostWithHandles("interop.dispatch", payload,
-                      base::BindOnce(&NativeGpuService::DispatchInteropReply,
-                                     weak_factory_.GetWeakPtr(),
-                                     std::move(acquire), std::move(callback),
-                                     wait_fence_count),
-                      std::move(result->fences),
-                      std::move(result->fence_values));
+  CallHostWithHandles(
+      "interop.dispatch", payload,
+      base::BindOnce(&NativeGpuService::DispatchInteropReply,
+                     weak_factory_.GetWeakPtr(), std::move(acquire),
+                     std::move(callback), wait_fence_count),
+      std::move(result->fences), std::move(result->fence_values));
 }
 void NativeGpuService::DispatchInteropReply(
     gpu::mojom::NativeGpuTextureCommandPtr acquire,
@@ -1024,12 +1087,14 @@ void NativeGpuService::DispatchInteropReply(
     return;
   }
   const size_t resource_count = acquire->resources.size();
+  auto resource_tokens = acquire->resources;
   content::DispatchNativeGpuTextureCommand(
       render_frame_host().GetProcess()->GetDeprecatedID(), std::move(acquire),
       base::BindOnce(
           [](base::WeakPtr<NativeGpuService> self,
-             DispatchSharedCallback callback,
-             size_t wait_fence_count, size_t resource_count,
+             DispatchSharedCallback callback, size_t wait_fence_count,
+             size_t resource_count,
+             const std::vector<base::UnguessableToken>& resource_tokens,
              gpu::mojom::NativeGpuTextureResultPtr result) {
             if (!self || self->stopped_ ||
                 self->Status() != blink::mojom::PermissionStatus::GRANTED) {
@@ -1037,28 +1102,54 @@ void NativeGpuService::DispatchInteropReply(
               return;
             }
             self->interop_busy_ = false;
+            if (result->success && !result->completion_events.empty() &&
+                (result->completion_events.size() != 1 ||
+                 !self->WatchCanvasCompletion(
+                     result->completion_events[0].TakeHandle(),
+                     resource_tokens))) {
+              result->success = false;
+              result->error = "Could not track native canvas completion.";
+            }
             if (!result->success) {
               self->StopProcess();
             }
+            self->DrainRetiredResources();
             base::DictValue stats;
             stats.Set("gpuWaitQueued", true);
             stats.Set("waitFenceCount", static_cast<int>(wait_fence_count));
             stats.Set("resourceCount", static_cast<int>(resource_count));
-            std::move(callback).Run(
-                result->success,
-                result->success ? base::WriteJson(stats).value_or("{}")
-                                : result->error);
+            std::move(callback).Run(result->success,
+                                    result->success
+                                        ? base::WriteJson(stats).value_or("{}")
+                                        : result->error);
           },
           weak_factory_.GetWeakPtr(), std::move(callback), wait_fence_count,
-          resource_count));
+          resource_count, std::move(resource_tokens)));
 }
-void NativeGpuService::DestroySharedResource(uint32_t id) {
+void NativeGpuService::DrainRetiredResources() {
+  if (interop_busy_) {
+    return;
+  }
+  auto retired = std::move(retired_resources_);
+  retired_resources_.clear();
+  for (const auto& [id, ready] : retired) {
+    DestroySharedResource(id, ready);
+  }
+}
+void NativeGpuService::DestroySharedResource(uint32_t id,
+                                             const gpu::SyncToken& ready) {
   auto found = shared_resources_.find(id);
   if (found == shared_resources_.end()) {
     return;
   }
-  if (interop_busy_) {
+  if (!ValidInteropDevice(ready) ||
+      ready.command_buffer_id() != found->second.ready.command_buffer_id() ||
+      ready.release_count() < found->second.ready.release_count()) {
     StopProcess();
+    return;
+  }
+  if (interop_busy_) {
+    retired_resources_.insert_or_assign(id, ready);
     return;
   }
   auto resource = found->second;
@@ -1066,7 +1157,7 @@ void NativeGpuService::DestroySharedResource(uint32_t id) {
   auto command = gpu::mojom::NativeGpuTextureCommand::New();
   command->action = gpu::mojom::NativeGpuTextureAction::kDestroyResource;
   command->frame = resource.token;
-  command->ready = resource.ready;
+  command->ready = ready;
   content::DispatchNativeGpuTextureCommand(
       render_frame_host().GetProcess()->GetDeprecatedID(), std::move(command),
       base::BindOnce([](gpu::mojom::NativeGpuTextureResultPtr) {}));

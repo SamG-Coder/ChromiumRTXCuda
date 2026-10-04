@@ -99,8 +99,9 @@ class GPUCanvasContext : public ScriptWrappable,
   ImageBitmap* TransferToImageBitmap(ScriptState*, ExceptionState&) final;
 
   bool IsOffscreenCanvas() const {
-    if (Host())
+    if (Host()) {
       return Host()->IsOffscreenCanvas();
+    }
     return false;
   }
 
@@ -109,6 +110,11 @@ class GPUCanvasContext : public ScriptWrappable,
   getHTMLOrOffscreenCanvas(ScriptState*) const;
   void configure(const GPUCanvasConfiguration* descriptor, ExceptionState&);
   void unconfigure();
+  bool PresentNativeImage(GPUDevice*,
+                          scoped_refptr<gpu::ClientSharedImage>,
+                          const gpu::SyncToken&,
+                          viz::ReleaseCallback,
+                          ExceptionState&);
   GPUCanvasConfiguration* getConfiguration();
   GPUTexture* getCurrentTexture(ScriptState*, ExceptionState&);
   // }}} End of WebIDL binding implementation.
@@ -121,7 +127,8 @@ class GPUCanvasContext : public ScriptWrappable,
 
  private:
   CanvasNon2DResourceProvider* GetOrCreateCanvasNon2DResourceProvider();
-  scoped_refptr<WebGPUMailboxTexture> GetFrontBufferMailboxTexture();
+  scoped_refptr<WebGPUMailboxTexture> GetFrontBufferMailboxTexture(
+      bool prefer_native_back_buffer = false);
   void DetachSwapBuffers();
   void ReplaceDrawingBuffer(bool destroy_swap_buffers);
   void InitializeAlphaModePipeline(wgpu::TextureFormat format);
