@@ -118,18 +118,22 @@ try {
   const iframe=page.frames().find(frame=>frame.parentFrame());
   assert.equal(await iframe.evaluate(()=>navigator.cuda.queryPermission()),'denied');
   check('iframes cannot acquire native GPU access');
+  // Release Playwright's capture reference before creating the session: an
+  // emulated-visible page can already be hidden in the browser process, so
+  // switching tabs would not produce a new WebContents visibility transition.
+  const playwrightCdp=page._connection.toImpl(page).delegate._mainFrameSession._client;
+  await playwrightCdp.send('Emulation.setFocusEmulationEnabled',{enabled:false});
+  await page.bringToFront();
+  await page.waitForFunction(async()=>document.visibilityState==='visible' &&
+    await navigator.cuda.queryPermission()==='granted',null,{polling:100});
   await page.evaluate(async()=>{
     const {GpuRuntime}=await import('/js/runtime.js');
     window.liveCuda=await GpuRuntime.create();window.liveBuffer=liveCuda.createBuffer(new Uint32Array([37]));
     await liveCuda.idle();
   });
-  // Playwright's focus emulation holds a per-session capture reference that
-  // keeps pages visible. Release it through its own CDP session, not a second
-  // session. This internal access is confined to the pinned Playwright test.
-  const playwrightCdp=page._connection.toImpl(page).delegate._mainFrameSession._client;
-  await playwrightCdp.send('Emulation.setFocusEmulationEnabled',{enabled:false});
   const other=await context.newPage();await other.goto('about:blank');await other.bringToFront();
-  await page.waitForFunction(()=>document.visibilityState==='hidden',null,{polling:100});
+  await page.waitForFunction(async()=>document.visibilityState==='hidden' &&
+    await navigator.cuda.queryPermission()==='denied',null,{polling:100});
   await page.bringToFront();
   assert.match(await page.evaluate(()=>window.liveCuda.read(window.liveBuffer).catch(e=>e.message)),/Unknown|invalid|closed|buffer/i);
   check('hiding a tab destroys its GPU buffers');
