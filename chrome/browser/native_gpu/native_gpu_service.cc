@@ -986,16 +986,19 @@ void NativeGpuService::ReleaseInteropReply(
         false, result->success ? "Native access revoked." : result->error);
     return;
   }
+  const size_t wait_fence_count = result->fences.size();
   CallHostWithHandles("interop.dispatch", payload,
                       base::BindOnce(&NativeGpuService::DispatchInteropReply,
                                      weak_factory_.GetWeakPtr(),
-                                     std::move(acquire), std::move(callback)),
+                                     std::move(acquire), std::move(callback),
+                                     wait_fence_count),
                       std::move(result->fences),
                       std::move(result->fence_values));
 }
 void NativeGpuService::DispatchInteropReply(
     gpu::mojom::NativeGpuTextureCommandPtr acquire,
     DispatchSharedCallback callback,
+    size_t wait_fence_count,
     bool success,
     std::string text,
     std::vector<mojo::PlatformHandle>) {
@@ -1010,11 +1013,13 @@ void NativeGpuService::DispatchInteropReply(
         false, success ? "CUDA did not queue a completion signal." : text);
     return;
   }
+  const size_t resource_count = acquire->resources.size();
   content::DispatchNativeGpuTextureCommand(
       render_frame_host().GetProcess()->GetDeprecatedID(), std::move(acquire),
       base::BindOnce(
           [](base::WeakPtr<NativeGpuService> self,
              DispatchSharedCallback callback,
+             size_t wait_fence_count, size_t resource_count,
              gpu::mojom::NativeGpuTextureResultPtr result) {
             if (!self || self->stopped_ ||
                 self->Status() != blink::mojom::PermissionStatus::GRANTED) {
@@ -1025,11 +1030,17 @@ void NativeGpuService::DispatchInteropReply(
             if (!result->success) {
               self->StopProcess();
             }
+            base::DictValue stats;
+            stats.Set("gpuWaitQueued", true);
+            stats.Set("waitFenceCount", static_cast<int>(wait_fence_count));
+            stats.Set("resourceCount", static_cast<int>(resource_count));
             std::move(callback).Run(
                 result->success,
-                result->success ? "{\"gpuWaitQueued\":true}" : result->error);
+                result->success ? base::WriteJson(stats).value_or("{}")
+                                : result->error);
           },
-          weak_factory_.GetWeakPtr(), std::move(callback)));
+          weak_factory_.GetWeakPtr(), std::move(callback), wait_fence_count,
+          resource_count));
 }
 void NativeGpuService::DestroySharedResource(uint32_t id) {
   auto found = shared_resources_.find(id);

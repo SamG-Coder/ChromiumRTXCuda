@@ -95,6 +95,7 @@ class NativeGpuService final
                            gpu::mojom::NativeGpuTextureResultPtr);
   void DispatchInteropReply(gpu::mojom::NativeGpuTextureCommandPtr,
                             DispatchSharedCallback,
+                            size_t,
                             bool,
                             std::string,
                             std::vector<mojo::PlatformHandle>);

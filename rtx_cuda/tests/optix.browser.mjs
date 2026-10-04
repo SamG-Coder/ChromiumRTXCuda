@@ -115,7 +115,7 @@ try {
         if(any(abs(ca-cb)>vec4i(1))||any(abs(bloomNative[index]-bloomReference[index])>vec4f(0.0002))){atomicAdd(&counts[3],1u);}
       }`})}});
     const canvas=document.querySelector('canvas'),ctx=canvas.getContext('webgpu');
-    const extents=[[128,128],[256,128],[128,64]];let frames=0,realBuffers=true,realTextures=true;
+    const extents=[[128,128],[256,128],[128,64]];let frames=0,realBuffers=true,realTextures=true;const handoffs=[];
     for(const [width,height] of extents) {
       canvas.width=width;canvas.height=height;canvas.style.width='768px';canvas.style.height=`${768*height/width}px`;
       ctx.configure({device,format:'rgba8unorm',alphaMode:'opaque',usage:GPUTextureUsage.COPY_DST|GPUTextureUsage.RENDER_ATTACHMENT});
@@ -143,7 +143,7 @@ try {
         batch.dispatch(bloom.bind({input:hdr,output:bloomA},{width,height,axis:0}),groups);
         batch.dispatch(bloom.bind({input:bloomA,output:bloomB},{width,height,axis:1}),groups);
         batch.dispatch(present.bind({hdr,bloom:bloomB,diffraction,image:water},{width,height,exposure:1,glare:1}),groups);
-        await batch.submit();
+        handoffs.push(await batch.submit());
         const referenceBatch=rt.batch();
         referenceBatch.dispatch(bloomGpu.bind({input:hdr,output:refA},{width,height,axis:0}),groups);
         referenceBatch.dispatch(bloomGpu.bind({input:refA,output:refB},{width,height,axis:1}),groups);
@@ -167,7 +167,7 @@ try {
     await scene.destroy();await pipeline.destroy();
     let staleRejected=false;try{pipeline.bind(scene);}catch{staleRejected=true;}
     for(let i=0;i<12;i++){const temporary=await n.createAccelerationStructure({vertexCount:3});await temporary.destroy();}
-    const result={capabilities:n.capabilities.optix,frames,extents,counts,realBuffers,realTextures,includesRejected,invalidRangeRejected,staleRejected,
+    const result={capabilities:n.capabilities.optix,frames,extents,counts,handoffs,realBuffers,realTextures,includesRejected,invalidRangeRejected,staleRejected,
       optixObjectsRemaining:n.optixObjects.size,pixelReadbackBytes:0,validationCounterReadbackBytes:16,
       clearwaterKernels:['bloom_pass','present'],clearwaterComparison:'GPU comparison with the same .cu kernels compiled to WGSL',errors};
     rt.destroyBuffer(vertices);rt.destroyBuffer(diffraction);controls.destroy();counters.destroy();await n.idle();
@@ -176,6 +176,10 @@ try {
   },{source,waterSource});
   assert.equal(report.render.counts[0],0);assert.ok(report.render.counts[1]>400000);assert.ok(report.render.counts[2]>0);
   assert.equal(report.render.counts[3],0);
+  assert.equal(report.render.handoffs.length,24);
+  for(const h of report.render.handoffs){assert.equal(h.gpuWaitQueued,true);assert.ok(Number.isInteger(h.waitFenceCount)&&h.waitFenceCount>=0&&h.waitFenceCount<=h.resourceCount*4);}
+  assert.ok(report.render.handoffs.some(h=>h.waitFenceCount>0&&h.waitFenceCount<h.resourceCount),'Shared resource fences should be consolidated');
+  check('shared-resource fence consolidation preserves GPU output across repeated CUDA/WebGPU ownership transfers');
   assert.equal(report.render.frames,24);assert.equal(report.render.realBuffers,true);assert.equal(report.render.realTextures,true);
   for(const key of ['includesRejected','invalidRangeRejected','staleRejected'])assert.equal(report.render[key],true,key);
   assert.equal(report.render.optixObjectsRemaining,0);assert.deepEqual(report.render.errors,[]);

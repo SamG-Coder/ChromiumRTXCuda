@@ -1573,6 +1573,13 @@ mojom::NativeGpuTextureResultPtr WebGPUDecoderImpl::NativeResourceCommand(
       return result;
     }
     wgpu::Device device;
+    // Many resources were last used on the same Dawn queue. EndAccess can
+    // return the same timeline fence for each one. Export/import/wait once at
+    // the highest required value, rather than once per resource. Keep the
+    // originating fences alive until the entire release has been collected so
+    // an exported HANDLE cannot be closed and reused during this operation.
+    std::map<HANDLE, size_t> exported_fences;
+    std::vector<wgpu::SharedFence> retained_fences;
     for (const auto& token : command.resources) {
       auto it = native_resources_.find(token);
       if (it == native_resources_.end() ||
@@ -1598,13 +1605,35 @@ mojom::NativeGpuTextureResultPtr WebGPUDecoderImpl::NativeResourceCommand(
             wgpu::SharedFenceExportInfo info;
             info.nextInChain = &shared;
             fences[i].ExportInfo(&info);
+            if (info.type != wgpu::SharedFenceType::DXGISharedHandle) {
+              return false;
+            }
+            auto found = exported_fences.find(shared.handle);
+            if (found == exported_fences.end()) {
+              // Imported CUDA fences can be separate HANDLEs to the same
+              // kernel object. Numeric equality alone misses those aliases.
+              for (size_t j = 0; j < result->fences.size(); ++j) {
+                if (CompareObjectHandles(
+                        shared.handle, result->fences[j].GetHandle().get())) {
+                  retained_fences.push_back(fences[i]);
+                  found = exported_fences.emplace(shared.handle, j).first;
+                  break;
+                }
+              }
+            }
+            if (found != exported_fences.end()) {
+              auto& required = result->fence_values[found->second];
+              required = std::max(required, values[i]);
+              continue;
+            }
             HANDLE duplicate = nullptr;
-            if (info.type != wgpu::SharedFenceType::DXGISharedHandle ||
-                !DuplicateHandle(GetCurrentProcess(), shared.handle,
+            if (!DuplicateHandle(GetCurrentProcess(), shared.handle,
                                  GetCurrentProcess(), &duplicate, 0, FALSE,
                                  DUPLICATE_SAME_ACCESS)) {
               return false;
             }
+            exported_fences.emplace(shared.handle, result->fences.size());
+            retained_fences.push_back(fences[i]);
             result->fences.emplace_back(base::win::ScopedHandle(duplicate));
             result->fence_values.push_back(values[i]);
           }

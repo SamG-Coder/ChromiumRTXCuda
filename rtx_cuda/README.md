@@ -531,3 +531,18 @@ New integration code is BSD-3-Clause; Chromium retains its existing license.
 The vendored nlohmann/json 3.12.0 header is MIT licensed; see
 [its license](third_party/json/LICENSE.MIT). NVIDIA SDK/runtime files retain
 their NVIDIA licenses and remain external to this repository.
+
+### Shared submission efficiency
+
+Put dependent CUDA kernels, OptiX builds/traces and CUDA postprocessing into one
+`native.batch()` before calling `submit()`. Operations execute in order on the
+same CUDA stream. A combined batch needs one WebGPU-to-CUDA-to-WebGPU ownership
+transfer; splitting it into several awaited submissions repeats that transfer.
+
+Chrome consolidates duplicate exported Dawn timeline fence handles at their
+maximum required value. Distinct fences remain separate, and every resource
+still goes through EndAccess/BeginAccess. The submission result includes
+`gpuWaitQueued`, `waitFenceCount` and `resourceCount` diagnostic fields. These
+report queued GPU dependencies, not CPU waits or proof that GPU work has finished.
+Use a completion wait for CPU readback, explicit timing or bounded backpressure,
+rather than inserting it between dependent kernels in a batch.
