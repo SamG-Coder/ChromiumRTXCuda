@@ -12,7 +12,13 @@
 #endif
 
 namespace gpu {
+webgpu::WebGPUDecoder* DecoderContext::AsWebGPUDecoder() {
+  return nullptr;
+}
 namespace webgpu {
+WebGPUDecoder* WebGPUDecoder::AsWebGPUDecoder() {
+  return this;
+}
 
 // static
 std::unique_ptr<WebGPUDecoder> WebGPUDecoder::Create(

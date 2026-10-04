@@ -138,6 +138,9 @@ content::PermissionDescriptorUtil::CreatePermissionDescriptorForPermissionType(
     case blink::PermissionType::LOCAL_FONTS:
       return CreatePermissionDescriptor(
           blink::mojom::PermissionName::LOCAL_FONTS);
+    case blink::PermissionType::NATIVE_GPU:
+      return CreatePermissionDescriptor(
+          blink::mojom::PermissionName::NATIVE_GPU);
     case blink::PermissionType::DISPLAY_CAPTURE:
       return CreatePermissionDescriptor(
           blink::mojom::PermissionName::DISPLAY_CAPTURE);

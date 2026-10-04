@@ -96,6 +96,8 @@ enum class RequestTypeForUma {
   PERMISSION_GEOLOCATION_APPROXIMATE = 47,
   PERMISSION_GEOLOCATION_UPGRADE = 48,
   PERMISSION_AMBIENT_LOGIN = 49,
+  PERMISSION_NATIVE_GPU = 50,
+
   // NUM must be the last value in the enum.
   NUM,
 };

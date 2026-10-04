@@ -47,6 +47,9 @@ enum class RequestType {
   kMicStream,
   kMidiSysex,
   kMultipleDownloads,
+#if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
+  kNativeGpu,
+#endif
 #if BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)
   kNfcDevice,
 #endif  // BUILDFLAG(IS_ANDROID) || BUILDFLAG(IS_IOS)

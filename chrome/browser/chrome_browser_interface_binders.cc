@@ -9,6 +9,9 @@
 #include "base/feature_list.h"
 #include "base/functional/bind.h"
 #include "build/build_config.h"
+#if BUILDFLAG(IS_WIN)
+#include "chrome/browser/native_gpu/native_gpu_service.h"
+#endif
 #include "build/chromeos_buildflags.h"
 #include "chrome/browser/accessibility/accessibility_labels_service.h"
 #include "chrome/browser/accessibility/accessibility_labels_service_factory.h"
@@ -452,6 +455,10 @@ void BindCredentialManager(
 void PopulateChromeFrameBinders(
     mojo::BinderMapWithContext<content::RenderFrameHost*>* map,
     content::RenderFrameHost* render_frame_host) {
+#if BUILDFLAG(IS_WIN)
+  map->Add<blink::mojom::NativeGpuService>(
+      &native_gpu::NativeGpuService::Create);
+#endif
   map->Add<glic::mojom::WebClientHandler>(&glic::BindGlicWebClientHandler);
   // Defense in depth: privileged capability interfaces are not even registered
   // for a frame outside a privileged process, so a non-PWC frame cannot

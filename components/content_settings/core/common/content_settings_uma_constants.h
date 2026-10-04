@@ -171,6 +171,7 @@ inline constexpr auto kContentSettingsTypeToHistogramValue =
         {ContentSettingsType::SUB_APPS_WITHOUT_PROMPTS, 145},
         {ContentSettingsType::INLINE_CUE_MENU, 146},
         {ContentSettingsType::SUSPICIOUS_SITE_WARNING_DATA, 147},
+        {ContentSettingsType::NATIVE_GPU, 148},
 
         // As mentioned at the top, please don't forget to update ContentType in
         // enums.xml when you add entries here!

@@ -11,6 +11,7 @@ import "gpu/ipc/common/gpu_feature_info.mojom";
 import "gpu/ipc/common/gpu_info.mojom";
 import "gpu/ipc/common/gpu_peak_memory.mojom";
 import "gpu/ipc/common/memory_stats.mojom";
+import "gpu/ipc/common/native_gpu.mojom";
 import "gpu/ipc/common/shared_image_capabilities.mojom";
 import "gpu/ipc/common/surface_handle.mojom";
 import "gpu/ipc/common/sync_token.mojom";
@@ -64,6 +65,10 @@ enum MemoryInvalidAccessType {
 };
 
 interface GpuService {
+  // Browser-only texture handoff after native-gpu site permission validation.
+  [EnableIf=is_win]
+  NativeGPUTextureCommand(int32 client_id, gpu.mojom.NativeGpuTextureCommand command)
+      => (gpu.mojom.NativeGpuTextureResult result);
   // Tells the GPU service to connect `channel_handle` for communication with a
   // client. The GPU service responds with `success` to indicate whether the
   // connecting of `channel_handle` succeeds or not.  `gpu_info` and

@@ -483,5 +483,8 @@ enum ContentSettingsType {
 
   // Stores allowlist decisions for Suspicious Site Warnings.
   SUSPICIOUS_SITE_WARNING_DATA,
+
+  // Native CUDA and RTX access in ChromiumRTXCuda.
+  NATIVE_GPU,
 };
 // LINT.ThenChange(//components/content_settings/core/common/content_settings_uma_constants.h:kContentSettingsTypeToHistogramValue)

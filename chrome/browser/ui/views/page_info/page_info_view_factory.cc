@@ -554,6 +554,7 @@ const ui::ImageModel PageInfoViewFactory::GetPermissionIcon(
                          ? vector_icons::kVideogameAssetIcon
                          : vector_icons::kVideogameAssetChromeRefreshOldIcon);
       break;
+    case ContentSettingsType::NATIVE_GPU:
     case ContentSettingsType::IDLE_DETECTION:
       icon = show_blocked_badge ? &(features::IsRoundedIconsEnabled()
                                         ? vector_icons::kDevicesOffIcon
@@ -760,6 +761,9 @@ const ui::ImageModel PageInfoViewFactory::GetPermissionIcon(
       icon = &(features::IsRoundedIconsEnabled()
                    ? vector_icons::kSelectWindowIcon
                    : vector_icons::kSelectWindowOldIcon);
+      break;
+    case ContentSettingsType::NATIVE_GPU:
+      icon = &vector_icons::kDevicesIcon;
       break;
     case ContentSettingsType::LOCAL_FONTS:
       icon = &(features::IsRoundedIconsEnabled()

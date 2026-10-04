@@ -247,6 +247,14 @@ function getCategoryItemMap(): Map<ContentSettingsTypes, CategoryListItem> {
       enabledLabel: 'siteSettingsFontsAsk',
       disabledLabel: 'siteSettingsFontsBlocked',
     },
+    {
+      route: routes.SITE_SETTINGS_NATIVE_GPU,
+      id: Id.NATIVE_GPU,
+      label: 'siteSettingsNativeGpu',
+      icon: 'settings:devices',
+      enabledLabel: 'siteSettingsNativeGpuAsk',
+      disabledLabel: 'siteSettingsNativeGpuBlocked',
+    },
     // If LNA is enabled, we show the combo of LOCAL_NETWORK and
     // LOOPBACK_NETWORK settings.
     {
@@ -541,6 +549,7 @@ export class SettingsSiteSettingsPageElement extends
               Id.IDLE_DETECTION,
               Id.WINDOW_MANAGEMENT,
               Id.LOCAL_FONTS,
+              Id.NATIVE_GPU,
               Id.AUTO_PICTURE_IN_PICTURE,
               Id.CAPTURED_SURFACE_CONTROL,
               Id.KEYBOARD_LOCK,

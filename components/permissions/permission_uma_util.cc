@@ -160,6 +160,8 @@ std::string GetPermissionRequestString(RequestTypeForUma type) {
       return "WindowManagement";
     case RequestTypeForUma::PERMISSION_LOCAL_FONTS:
       return "LocalFonts";
+    case RequestTypeForUma::PERMISSION_NATIVE_GPU:
+      return "NativeGpu";
     case RequestTypeForUma::PERMISSION_IDLE_DETECTION:
       return "IdleDetection";
     case RequestTypeForUma::PERMISSION_FILE_SYSTEM_ACCESS:
@@ -683,6 +685,8 @@ std::string GetPermissionStringForUma(
       return "WindowPlacement";
     case ContentSettingsType::LOCAL_FONTS:
       return "LocalFonts";
+    case ContentSettingsType::NATIVE_GPU:
+      return "NativeGpu";
     case ContentSettingsType::IDLE_DETECTION:
       return "IdleDetection";
     case ContentSettingsType::CAPTURED_SURFACE_CONTROL:

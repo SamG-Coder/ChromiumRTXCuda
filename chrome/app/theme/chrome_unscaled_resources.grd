@@ -21,9 +21,18 @@
           <include name="IDR_PRODUCT_LOGO_256" file="${branding_path_component}/linux/product_logo_256.png" type="BINDATA" />
         </then>
         <else>
-          <include name="IDR_PRODUCT_LOGO_64" file="${branding_path_component}/product_logo_64.png" type="BINDATA" />
-          <include name="IDR_PRODUCT_LOGO_128" file="${branding_path_component}/product_logo_128.png" type="BINDATA" />
-          <include name="IDR_PRODUCT_LOGO_256" file="${branding_path_component}/product_logo_256.png" type="BINDATA" />
+          <if expr="is_win and not _google_chrome and not _is_chrome_for_testing_branded">
+            <then>
+              <include name="IDR_PRODUCT_LOGO_64" file="../../../rtx_cuda/assets/icon-64.png" type="BINDATA" />
+              <include name="IDR_PRODUCT_LOGO_128" file="../../../rtx_cuda/assets/icon-128.png" type="BINDATA" />
+              <include name="IDR_PRODUCT_LOGO_256" file="../../../rtx_cuda/assets/icon-256.png" type="BINDATA" />
+            </then>
+            <else>
+              <include name="IDR_PRODUCT_LOGO_64" file="${branding_path_component}/product_logo_64.png" type="BINDATA" />
+              <include name="IDR_PRODUCT_LOGO_128" file="${branding_path_component}/product_logo_128.png" type="BINDATA" />
+              <include name="IDR_PRODUCT_LOGO_256" file="${branding_path_component}/product_logo_256.png" type="BINDATA" />
+            </else>
+          </if>
         </else>
       </if>
       <if expr="is_macosx">

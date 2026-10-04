@@ -151,6 +151,8 @@ RequestTypeForUma PermissionUtil::GetUmaValueForRequestType(
     // TODO(crbug.com/40214907): Enable on Android
     case RequestType::kLocalFonts:
       return RequestTypeForUma::PERMISSION_LOCAL_FONTS;
+    case RequestType::kNativeGpu:
+      return RequestTypeForUma::PERMISSION_NATIVE_GPU;
 #endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
     case RequestType::kLocalNetwork:
       return RequestTypeForUma::PERMISSION_LOCAL_NETWORK;
@@ -347,6 +349,9 @@ bool PermissionUtil::GetPermissionType(ContentSettingsType type,
       break;
     case ContentSettingsType::LOCAL_FONTS:
       *out = PermissionType::LOCAL_FONTS;
+      break;
+    case ContentSettingsType::NATIVE_GPU:
+      *out = PermissionType::NATIVE_GPU;
       break;
     case ContentSettingsType::IDLE_DETECTION:
       *out = PermissionType::IDLE_DETECTION;
@@ -566,6 +571,8 @@ ContentSettingsType PermissionUtil::PermissionTypeToContentSettingsTypeSafe(
       return ContentSettingsType::WINDOW_MANAGEMENT;
     case PermissionType::LOCAL_FONTS:
       return ContentSettingsType::LOCAL_FONTS;
+    case PermissionType::NATIVE_GPU:
+      return ContentSettingsType::NATIVE_GPU;
     case PermissionType::DISPLAY_CAPTURE:
       return ContentSettingsType::DISPLAY_CAPTURE;
     case PermissionType::CAPTURED_SURFACE_CONTROL:

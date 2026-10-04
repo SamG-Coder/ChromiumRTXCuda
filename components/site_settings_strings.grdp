@@ -325,4 +325,11 @@
     Offer writing help
   </message>
   </if>
+  <message name="IDS_SITE_SETTINGS_TYPE_NATIVE_GPU" desc="Native GPU permission text in ChromiumRTXCuda.">Native CUDA and RTX</message>
+  <message name="IDS_SITE_SETTINGS_TYPE_NATIVE_GPU_MID_SENTENCE" desc="Native GPU permission text in ChromiumRTXCuda.">native CUDA and RTX</message>
+  <message name="IDS_SITE_SETTINGS_NATIVE_GPU_DESCRIPTION" desc="Description of native GPU site access.">Sites can run CUDA programs and use RTX graphics features on your GPU</message>
+  <message name="IDS_SITE_SETTINGS_NATIVE_GPU_ASK" desc="Ask by default for native GPU site access.">Sites can ask to use native CUDA and RTX</message>
+  <message name="IDS_SITE_SETTINGS_NATIVE_GPU_BLOCKED" desc="Block native GPU site access by default.">Don't allow sites to use native CUDA and RTX</message>
+  <message name="IDS_SITE_SETTINGS_NATIVE_GPU_BLOCKED_EXCEPTIONS" desc="Sites blocked from native GPU access.">Not allowed to use native CUDA and RTX</message>
+  <message name="IDS_SITE_SETTINGS_NATIVE_GPU_ALLOWED_EXCEPTIONS" desc="Sites allowed native GPU access.">Allowed to use native CUDA and RTX</message>
 </grit-part>

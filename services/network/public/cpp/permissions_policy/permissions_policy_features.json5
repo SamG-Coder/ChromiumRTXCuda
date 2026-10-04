@@ -463,6 +463,11 @@
       visibility: "IsolatedContext",
     },
     {
+      name: "NativeGpu",
+      permissions_policy_name: "native-gpu",
+      depends_on: ["NativeGpu"],
+    },
+    {
       name: "OnDeviceSpeechRecognition",
       permissions_policy_name: "on-device-speech-recognition",
       depends_on: ["OnDeviceWebSpeechAvailable"],

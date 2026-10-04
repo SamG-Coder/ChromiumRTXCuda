@@ -128,6 +128,7 @@ build_webui("build") {
     "site_settings/media_picker.ts",
     "site_settings/microphone_page.ts",
     "site_settings/midi_devices_page.ts",
+    "site_settings/native_gpu_page.ts",
     "site_settings/notifications_page.ts",
     "site_settings/payment_handler_page.ts",
     "site_settings/pdf_documents_page.ts",

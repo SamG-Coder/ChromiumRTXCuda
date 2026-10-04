@@ -12,6 +12,7 @@
 #include "gpu/command_buffer/service/decoder_context.h"
 #include "gpu/gpu_gles2_export.h"
 #include "gpu/ipc/common/gpu_disk_cache_type.h"
+#include "gpu/ipc/common/native_gpu.mojom-forward.h"
 
 namespace gpu {
 
@@ -55,6 +56,10 @@ class GPU_GLES2_EXPORT WebGPUDecoder : public DecoderContext,
   WebGPUDecoder& operator=(const WebGPUDecoder&) = delete;
 
   ~WebGPUDecoder() override;
+  WebGPUDecoder* AsWebGPUDecoder() override;
+  // Called only by the permission-enforcing browser via GpuService.
+  virtual mojom::NativeGpuTextureResultPtr NativeTextureCommand(
+      mojom::NativeGpuTextureCommandPtr command) = 0;
 
   virtual ContextResult Initialize(const GpuFeatureInfo& gpu_feature_info) = 0;
 

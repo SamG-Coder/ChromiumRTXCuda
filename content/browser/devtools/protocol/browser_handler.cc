@@ -207,6 +207,8 @@ Response PermissionDescriptorToPermissionType(
     *permission_type = PermissionType::WINDOW_MANAGEMENT;
   } else if (name == "local-fonts") {
     *permission_type = PermissionType::LOCAL_FONTS;
+  } else if (name == "native-gpu") {
+    *permission_type = PermissionType::NATIVE_GPU;
   } else if (name == "display-capture") {
     *permission_type = PermissionType::DISPLAY_CAPTURE;
   } else if (name == "storage-access") {
@@ -303,6 +305,8 @@ Response FromProtocolPermissionType(
     *out_type = PermissionType::WINDOW_MANAGEMENT;
   } else if (type == protocol::Browser::PermissionTypeEnum::LocalFonts) {
     *out_type = PermissionType::LOCAL_FONTS;
+  } else if (type == protocol::Browser::PermissionTypeEnum::NativeGpu) {
+    *out_type = PermissionType::NATIVE_GPU;
   } else if (type == protocol::Browser::PermissionTypeEnum::DisplayCapture) {
     *out_type = PermissionType::DISPLAY_CAPTURE;
   } else if (type ==

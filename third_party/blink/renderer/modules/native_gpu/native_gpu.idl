@@ -1,0 +1,15 @@
+// Copyright 2026 The Chromium Authors. BSD-style license; see LICENSE.
+[Exposed=Window, SecureContext, RuntimeEnabled=NativeGpu]
+interface NativeGPU {
+  [CallWith=ScriptState, RaisesException] Promise<boolean> SupportsNativeCuda();
+  [CallWith=ScriptState, RaisesException] Promise<boolean> SupportsRTX();
+  [CallWith=ScriptState, RaisesException] Promise<DOMString> requestPermission();
+  [CallWith=ScriptState, RaisesException] Promise<DOMString> queryPermission();
+  // Transport used by the cuda-webshader-compatible GpuRuntime module.
+  [CallWith=ScriptState, RaisesException] Promise<DOMString> execute(DOMString operation, DOMString payload);
+  [CallWith=ScriptState, RaisesException] Promise<NativeGPUFrame> createDLSSFrame(
+      GPUDevice device, [EnforceRange] unsigned long width, [EnforceRange] unsigned long height,
+      [EnforceRange] unsigned long outputWidth, [EnforceRange] unsigned long outputHeight,
+      DOMString quality, boolean depthInverted);
+  undefined close();
+};

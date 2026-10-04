@@ -49,6 +49,7 @@ domain Browser
       idleDetection
       keyboardLock
       localFonts
+      nativeGpu
       localNetwork
       localNetworkAccess
       loopbackNetwork

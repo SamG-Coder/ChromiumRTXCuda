@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <array>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -53,6 +54,7 @@
 #include "gpu/config/gpu_finch_features.h"
 #include "gpu/config/gpu_preferences.h"
 #include "gpu/config/webgpu_blocklist_impl.h"
+#include "gpu/ipc/common/native_gpu.mojom.h"
 #include "gpu/webgpu/callback.h"
 #include "third_party/blink/public/common/tokens/tokens.h"
 #include "third_party/dawn/include/dawn/native/DawnNative.h"
@@ -72,6 +74,9 @@
 #if BUILDFLAG(IS_WIN)
 #include <dawn/native/D3D11Backend.h>
 #include <dawn/native/D3D12Backend.h>
+
+#include "base/win/scoped_handle.h"
+#include "mojo/public/cpp/platform/platform_handle.h"
 #include "ui/gl/gl_angle_util_win.h"
 #endif
 
@@ -148,6 +153,8 @@ class WebGPUDecoderImpl final : public WebGPUDecoder {
 
   // WebGPUDecoder implementation
   ContextResult Initialize(const GpuFeatureInfo& gpu_feature_info) override;
+  mojom::NativeGpuTextureResultPtr NativeTextureCommand(
+      mojom::NativeGpuTextureCommandPtr command) override;
 
   // DecoderContext implementation.
   base::WeakPtr<DecoderContext> AsWeakPtr() override {
@@ -1019,6 +1026,25 @@ class WebGPUDecoderImpl final : public WebGPUDecoder {
       known_device_metadata_;
 
   bool has_polling_work_ = false;
+#if BUILDFLAG(IS_WIN)
+  struct NativeFrame {
+    std::array<wgpu::SharedTextureMemory, 4> memory;
+    std::array<wgpu::Texture, 4> textures;
+    std::array<bool, 4> active = {};
+    ~NativeFrame() {
+      for (size_t i = 0; i < textures.size(); ++i) {
+        if (active[i]) {
+          wgpu::SharedTextureMemoryEndAccessState end;
+          memory[i].EndAccess(textures[i], &end);
+        }
+        if (textures[i]) {
+          textures[i].Destroy();
+        }
+      }
+    }
+  };
+  std::map<base::UnguessableToken, std::unique_ptr<NativeFrame>> native_frames_;
+#endif
   bool destroyed_ = false;
 
   scoped_refptr<gl::GLContext> gl_context_;
@@ -1190,6 +1216,167 @@ WebGPUDecoderImpl::WebGPUDecoderImpl(
   }
 }
 
+mojom::NativeGpuTextureResultPtr WebGPUDecoderImpl::NativeTextureCommand(
+    mojom::NativeGpuTextureCommandPtr command) {
+  auto result = mojom::NativeGpuTextureResult::New();
+  result->error = "Native GPU textures require a live D3D12 WebGPU device.";
+#if BUILDFLAG(IS_WIN)
+  if (destroyed_ || !wire_server_ || command->frame.is_empty()) {
+    return result;
+  }
+  auto parent = ScopedParentDecoder(this);
+  using Action = mojom::NativeGpuTextureAction;
+  if (command->action == Action::kDestroy) {
+    native_frames_.erase(command->frame);
+    result->success = true;
+    result->error.clear();
+    return result;
+  }
+  if (command->action == Action::kCreate) {
+    const auto& desc = command->descriptor;
+    if (!desc || command->handles.size() != 4 ||
+        native_frames_.contains(command->frame) || native_frames_.size() >= 4 ||
+        desc->width < 16 || desc->height < 16 ||
+        desc->output_width < desc->width ||
+        desc->output_height < desc->height || desc->output_width > 8192 ||
+        desc->output_height > 8192 ||
+        uint64_t(desc->width) * desc->height * 16 +
+                uint64_t(desc->output_width) * desc->output_height * 8 >
+            256 * 1024 * 1024) {
+      result->error = "Invalid shared texture dimensions or frame budget.";
+      return result;
+    }
+    wgpu::Device device =
+        wire_server_->GetDevice(desc->device_id, desc->device_generation);
+    auto metadata = known_device_metadata_.find(device);
+    if (!device || metadata == known_device_metadata_.end() ||
+        metadata->second.backendType != wgpu::BackendType::D3D12) {
+      return result;
+    }
+    auto d3d_device = dawn::native::d3d12::GetD3D12Device(device.Get());
+    const auto luid = d3d_device->GetAdapterLuid();
+    if (luid.LowPart != command->adapter_luid_low ||
+        luid.HighPart != command->adapter_luid_high) {
+      result->error = "WebGPU and DLSS must use the same NVIDIA adapter.";
+      return result;
+    }
+    constexpr std::array<wgpu::TextureFormat, 4> formats = {
+        wgpu::TextureFormat::RGBA16Float, wgpu::TextureFormat::RG16Float,
+        wgpu::TextureFormat::R32Float, wgpu::TextureFormat::RGBA16Float};
+    auto frame = std::make_unique<NativeFrame>();
+    for (size_t i = 0; i < 4; ++i) {
+      wgpu::SharedTextureMemoryDXGISharedHandleDescriptor handle_desc;
+      handle_desc.handle = command->handles[i].GetHandle().get();
+      handle_desc.useKeyedMutex = false;
+      wgpu::SharedTextureMemoryDescriptor memory_desc;
+      memory_desc.nextInChain = &handle_desc;
+      frame->memory[i] = device.ImportSharedTextureMemory(&memory_desc);
+      wgpu::SharedTextureMemoryProperties properties;
+      const wgpu::Extent3D size = {i == 3 ? desc->output_width : desc->width,
+                                   i == 3 ? desc->output_height : desc->height,
+                                   1};
+      if (frame->memory[i].GetProperties(&properties) !=
+              wgpu::Status::Success ||
+          properties.format != formats[i] ||
+          properties.size.width != size.width ||
+          properties.size.height != size.height ||
+          properties.size.depthOrArrayLayers != 1) {
+        result->error = "Failed to import the native D3D12 texture.";
+        return result;
+      }
+      wgpu::TextureDescriptor texture_desc;
+      texture_desc.size = size;
+      texture_desc.format = formats[i];
+      texture_desc.usage = wgpu::TextureUsage::CopySrc |
+                           wgpu::TextureUsage::CopyDst |
+                           wgpu::TextureUsage::TextureBinding |
+                           wgpu::TextureUsage::RenderAttachment;
+      frame->textures[i] = frame->memory[i].CreateTexture(&texture_desc);
+      wgpu::SharedTextureMemoryBeginAccessDescriptor begin;
+      // Dawn must clear any texels not written by the website before a read.
+      begin.initialized = false;
+      if (frame->memory[i].BeginAccess(frame->textures[i], &begin) !=
+          wgpu::Status::Success) {
+        result->error = "Cannot acquire the shared D3D12 texture.";
+        return result;
+      }
+      frame->active[i] = true;
+      if (!wire_server_->InjectTexture(
+              frame->textures[i].Get(),
+              {desc->textures[i]->id, desc->textures[i]->generation},
+              {desc->device_id, desc->device_generation})) {
+        result->error = "Invalid WebGPU texture reservation.";
+        return result;
+      }
+    }
+    native_frames_.emplace(command->frame, std::move(frame));
+  } else {
+    auto it = native_frames_.find(command->frame);
+    if (it == native_frames_.end()) {
+      result->error = "The DLSS frame has been destroyed.";
+      return result;
+    }
+    auto& frame = *it->second;
+    for (size_t i = 0; i < 4; ++i) {
+      if (command->action == Action::kRelease) {
+        if (!frame.active[i]) {
+          result->error = "The DLSS frame is already in use.";
+          native_frames_.erase(it);
+          return result;
+        }
+        wgpu::SharedTextureMemoryEndAccessState end;
+        auto status = frame.memory[i].EndAccess(frame.textures[i], &end);
+        frame.active[i] = false;
+        if (status != wgpu::Status::Success || (i != 3 && !end.initialized) ||
+            end.fenceCount != end.signaledValueCount || end.fenceCount > 4) {
+          result->error =
+              "Input textures must be initialized and the WebGPU device must "
+              "be alive.";
+          native_frames_.erase(it);
+          return result;
+        }
+        // Dawn owns these arrays for the lifetime of `end`.
+        auto fences = UNSAFE_BUFFERS(base::span(end.fences, end.fenceCount));
+        auto values = UNSAFE_BUFFERS(
+            base::span(end.signaledValues, end.signaledValueCount));
+        for (size_t j = 0; j < fences.size(); ++j) {
+          wgpu::SharedFenceDXGISharedHandleExportInfo shared;
+          wgpu::SharedFenceExportInfo info;
+          info.nextInChain = &shared;
+          fences[j].ExportInfo(&info);
+          HANDLE duplicate = nullptr;
+          if (info.type != wgpu::SharedFenceType::DXGISharedHandle ||
+              !DuplicateHandle(GetCurrentProcess(), shared.handle,
+                               GetCurrentProcess(), &duplicate, 0, FALSE,
+                               DUPLICATE_SAME_ACCESS)) {
+            result->error = "Cannot export the WebGPU completion fence.";
+            native_frames_.erase(it);
+            return result;
+          }
+          result->fences.emplace_back(base::win::ScopedHandle(duplicate));
+          result->fence_values.push_back(values[j]);
+        }
+      } else if (command->action == Action::kAcquire) {
+        wgpu::SharedTextureMemoryBeginAccessDescriptor begin;
+        // The browser only reacquires after the native DLSS fence has retired.
+        begin.initialized = true;
+        if (frame.active[i] ||
+            frame.memory[i].BeginAccess(frame.textures[i], &begin) !=
+                wgpu::Status::Success) {
+          result->error = "Cannot return the DLSS texture to WebGPU.";
+          native_frames_.erase(it);
+          return result;
+        }
+        frame.active[i] = true;
+      }
+    }
+  }
+  result->success = true;
+  result->error.clear();
+#endif
+  return result;
+}
+
 WebGPUDecoderImpl::~WebGPUDecoderImpl() {
   Destroy(false);
 }
@@ -1207,6 +1394,9 @@ void WebGPUDecoderImpl::Destroy(bool have_context) {
 
   associated_shared_image_map_.clear();
   associated_shared_buffer_map_.clear();
+#if BUILDFLAG(IS_WIN)
+  native_frames_.clear();
+#endif
 
   // Destroy all known devices to ensure that any service-side objects holding
   // refs to these objects observe that the devices are lost and can drop their

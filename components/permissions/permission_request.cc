@@ -424,6 +424,9 @@ std::u16string PermissionRequest::GetMessageTextFragment() const {
     case RequestType::kLocalFonts:
       message_id = IDS_FONT_ACCESS_PERMISSION_FRAGMENT;
       break;
+    case RequestType::kNativeGpu:
+      message_id = IDS_NATIVE_GPU_PERMISSION_FRAGMENT;
+      break;
     case RequestType::kLocalNetwork:
       message_id = IDS_LOCAL_NETWORK_PERMISSION_FRAGMENT;
       break;

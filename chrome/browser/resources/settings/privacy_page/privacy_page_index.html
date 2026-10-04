@@ -375,6 +375,15 @@
   </template>
 
   <template is="dom-if" if="[[renderView_(
+      routes_.SITE_SETTINGS_NATIVE_GPU, currentRoute, inSearchMode)]]"
+      update-when-false>
+    <settings-native-gpu-page slot="view" id="siteSettingsNativeGpu"
+        data-parent-view-id="privacy"
+        route-path$="[[routes_.SITE_SETTINGS_NATIVE_GPU.path]]">
+    </settings-native-gpu-page>
+  </template>
+
+  <template is="dom-if" if="[[renderView_(
       routes_.SITE_SETTINGS_LOCATION, currentRoute, inSearchMode)]]"
       update-when-false>
     <settings-geolocation-page slot="view" id="siteSettingsLocation"

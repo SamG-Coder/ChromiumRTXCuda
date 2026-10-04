@@ -145,6 +145,7 @@ ContentSettingsType kPermissionType[] = {
     ContentSettingsType::FILE_SYSTEM_WRITE_GUARD,
 #if !BUILDFLAG(IS_ANDROID)
     ContentSettingsType::LOCAL_FONTS,
+    ContentSettingsType::NATIVE_GPU,
 #endif
     ContentSettingsType::BLUETOOTH_GUARD,
     ContentSettingsType::BLUETOOTH_SCANNING,

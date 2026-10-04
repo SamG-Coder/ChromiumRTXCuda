@@ -1,0 +1,40 @@
+// Copyright 2026 The Chromium Authors. BSD-style license; see LICENSE.
+module gpu.mojom;
+import "gpu/ipc/common/sync_token.mojom";
+import "mojo/public/mojom/base/unguessable_token.mojom";
+
+// Renderer-visible identifiers refer only to objects in that renderer's wire
+// connection. Operating system handles travel exclusively between trusted
+// browser and GPU processes.
+struct NativeGpuWireTexture {
+  uint32 id;
+  uint32 generation;
+};
+struct NativeGpuFrameDescriptor {
+  SyncToken ready;
+  uint32 device_id;
+  uint32 device_generation;
+  array<NativeGpuWireTexture, 4> textures;
+  uint32 width;
+  uint32 height;
+  uint32 output_width;
+  uint32 output_height;
+  string quality;
+  bool depth_inverted;
+};
+enum NativeGpuTextureAction { kCreate, kRelease, kAcquire, kDestroy };
+struct NativeGpuTextureCommand {
+  NativeGpuTextureAction action;
+  mojo_base.mojom.UnguessableToken frame;
+  SyncToken ready;
+  NativeGpuFrameDescriptor? descriptor;
+  array<handle<platform>> handles;
+  uint32 adapter_luid_low;
+  int32 adapter_luid_high;
+};
+struct NativeGpuTextureResult {
+  bool success;
+  string error;
+  array<handle<platform>> fences;
+  array<uint64> fence_values;
+};

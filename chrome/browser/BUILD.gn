@@ -1435,6 +1435,10 @@ source_set("core") {
 
   if (is_win) {
     sources += [
+      "native_gpu/native_gpu_service.cc",
+      "native_gpu/native_gpu_service.h",
+    ]
+    sources += [
       "chrome_browser_main_win.cc",
       "chrome_browser_main_win.h",
       "font_prewarmer_tab_helper.cc",

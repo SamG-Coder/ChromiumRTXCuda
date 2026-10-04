@@ -85,6 +85,7 @@ PermissionToSchedulingFeature(PermissionType permission_name) {
     case PermissionType::CAMERA_PAN_TILT_ZOOM:
     case PermissionType::WINDOW_MANAGEMENT:
     case PermissionType::LOCAL_FONTS:
+    case PermissionType::NATIVE_GPU:
     case PermissionType::DISPLAY_CAPTURE:
     case PermissionType::GEOLOCATION:
     case PermissionType::GEOLOCATION_APPROXIMATE:

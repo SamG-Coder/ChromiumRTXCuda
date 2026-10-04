@@ -57,6 +57,8 @@ source_set("permissions") {
     "contexts/midi_permission_context.h",
     "contexts/midi_sysex_permission_context.cc",
     "contexts/midi_sysex_permission_context.h",
+    "contexts/native_gpu_permission_context.cc",
+    "contexts/native_gpu_permission_context.h",
     "contexts/nfc_permission_context.cc",
     "contexts/nfc_permission_context.h",
     "contexts/payment_handler_permission_context.cc",

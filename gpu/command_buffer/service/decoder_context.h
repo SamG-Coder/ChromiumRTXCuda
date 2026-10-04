@@ -27,6 +27,9 @@ class GLSurface;
 
 namespace gpu {
 class TextureBase;
+namespace webgpu {
+class WebGPUDecoder;
+}
 
 namespace gles2 {
 class ContextGroup;
@@ -45,6 +48,7 @@ class GPU_GLES2_EXPORT DecoderContext : public AsyncAPIInterface,
  public:
   DecoderContext() = default;
   ~DecoderContext() override = default;
+  virtual webgpu::WebGPUDecoder* AsWebGPUDecoder();
 
   //
   // Methods required by CommandBufferStub.

@@ -33,6 +33,7 @@
 #include "components/permissions/contexts/automatic_fullscreen_permission_context.h"
 #include "components/permissions/contexts/keyboard_lock_permission_context.h"
 #include "components/permissions/contexts/local_fonts_permission_context.h"
+#include "components/permissions/contexts/native_gpu_permission_context.h"
 #include "components/permissions/contexts/pointer_lock_permission_context.h"
 #include "components/permissions/contexts/speaker_selection_permission_context.h"
 #include "components/permissions/contexts/web_app_installation_permission_context.h"
@@ -152,6 +153,8 @@ permissions::PermissionManager::PermissionContextMap CreatePermissionContexts(
 
   permission_contexts[ContentSettingsType::LOCAL_FONTS] =
       std::make_unique<LocalFontsPermissionContext>(profile);
+  permission_contexts[ContentSettingsType::NATIVE_GPU] =
+      std::make_unique<NativeGpuPermissionContext>(profile);
 
   permission_contexts[ContentSettingsType::MEDIASTREAM_CAMERA] =
       std::make_unique<MediaStreamDevicePermissionContext>(

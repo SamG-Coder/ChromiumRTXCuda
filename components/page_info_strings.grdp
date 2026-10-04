@@ -1063,4 +1063,5 @@
     Your organization has blocked this site because it violates a policy.
   </message>
 
+  <message name="IDS_PAGE_INFO_STATE_TEXT_NATIVE_GPU_ASK" desc="Native GPU permission text in ChromiumRTXCuda.">Ask before running native CUDA code or using RTX graphics</message>
 </grit-part>

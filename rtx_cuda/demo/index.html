@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ChromiumRTXCuda</title>
+<link rel="icon" href="/assets/icon-32.png">
+<link rel="stylesheet" href="/demo/style.css">
+<main>
+  <p class="eyebrow">NATIVE GPU • WEBSITE PERMISSIONS</p>
+  <h1><img src="/assets/icon-64.png" width="64" height="64" alt=""> ChromiumRTXCuda</h1>
+  <p class="intro">Run CUDA kernels and hardware ray tracing from JavaScript, with your browser’s permission.</p>
+  <section class="access">
+    <div><h2>GPU access</h2><p id="capabilities">Checking this browser…</p><p id="permission">Permission: checking…</p></div>
+    <button id="allow" disabled>Request GPU access</button>
+  </section>
+  <div class="grid">
+    <section>
+      <p class="eyebrow">01 / CUDA</p><h2>Compute on the GPU</h2>
+      <p>A real .cu SAXPY kernel processes 262,147 floats. JavaScript supplies the buffers, dispatches the kernel, and checks every result.</p>
+      <button id="compute" disabled>Run CUDA test</button>
+      <pre id="compute-output">Waiting for permission.</pre>
+    </section>
+    <section>
+      <p class="eyebrow">02 / RTX</p><h2>Ray tracing &amp; DLSS</h2>
+      <p>Hardware DXR rays, shadows, and public NVIDIA DLSS processing. The static scene supports DLAA or Super Resolution.</p>
+      <div class="controls"><select id="mode" aria-label="RTX postprocessing"><option value="none">DXR only</option><option value="dlaa">DXR + DLAA</option><option value="dlss">DXR + DLSS Super Resolution</option></select><button id="render" disabled>Render</button></div>
+      <canvas id="frame" width="384" height="216" aria-label="RTX output"></canvas>
+      <p id="render-output">Waiting for permission.</p>
+    </section>
+  </div>
+  <section class="webgpu-section">
+    <p class="eyebrow">03 / YOUR WEBGPU RENDERER</p><h2>Your textures, through DLSS</h2>
+    <p>The website renders a moving object with color, depth, and motion vectors at 1280 × 720. DLSS accumulates eight jittered frames into a 1920 × 1080 GPU texture, which the website draws to this canvas.</p>
+    <button id="webgpu" disabled>Process WebGPU textures</button>
+    <canvas id="webgpu-frame" width="1920" height="1080" aria-label="WebGPU DLSS output"></canvas>
+    <pre id="webgpu-output">Waiting for permission.</pre>
+  </section>
+  <p class="note">Development build. Access is limited to visible, secure top-level pages. Change “Native CUDA and RTX” in this site’s browser settings to revoke access. DLSS 5 is excluded.</p>
+  <pre id="errors" role="alert"></pre>
+</main>
+<script type="module" src="/demo/app.js"></script>
+</html>

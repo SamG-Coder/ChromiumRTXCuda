@@ -194,6 +194,7 @@ mojom("mojom_platform") {
     "mediastream/media_devices.mojom",
     "mediastream/media_stream.mojom",
     "mime/mime_registry.mojom",
+    "native_gpu/native_gpu.mojom",
     "navigation/navigation_api_history_entry_arrays.mojom",
     "navigation/navigation_policy.mojom",
     "navigation/navigation_type_for_navigation_api.mojom",

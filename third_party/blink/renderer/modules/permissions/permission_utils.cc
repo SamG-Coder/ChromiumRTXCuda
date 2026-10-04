@@ -133,6 +133,8 @@ String PermissionNameToString(PermissionName name) {
       return "window-management";
     case PermissionName::LOCAL_FONTS:
       return "local_fonts";
+    case PermissionName::NATIVE_GPU:
+      return "native-gpu";
     case PermissionName::DISPLAY_CAPTURE:
       return "display_capture";
     case PermissionName::TOP_LEVEL_STORAGE_ACCESS:
@@ -421,6 +423,15 @@ PermissionDescriptorPtr ParsePermissionDescriptor(
         return nullptr;
       }
       return CreatePermissionDescriptor(PermissionName::LOCAL_FONTS);
+    }
+
+    case V8PermissionName::Enum::kNativeGpu: {
+      if (!RuntimeEnabledFeatures::NativeGpuEnabled(
+              ExecutionContext::From(script_state))) {
+        exception_state.ThrowTypeError("Native GPU API is not enabled.");
+        return nullptr;
+      }
+      return CreatePermissionDescriptor(PermissionName::NATIVE_GPU);
     }
 
     case V8PermissionName::Enum::kTopLevelStorageAccess: {

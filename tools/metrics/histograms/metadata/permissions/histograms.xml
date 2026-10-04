@@ -153,6 +153,7 @@ chromium-metrics-reviews@google.com.
   <variant name=".LoopbackNetwork" summary="Loopback network permission"/>
   <variant name=".MidiSysEx" summary="Midi SysEx permission"/>
   <variant name=".MultipleDownload" summary="Multiple downloads permission"/>
+  <variant name=".NativeGpu" summary="Native CUDA and RTX permission"/>
   <variant name=".Nfc" summary="NFC permission"/>
   <variant name=".Notifications" summary="Notification permission"/>
   <variant name=".PaymentHandler" summary="Payment Handler permission"/>

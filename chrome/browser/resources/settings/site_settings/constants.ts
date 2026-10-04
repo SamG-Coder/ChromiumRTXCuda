@@ -41,6 +41,7 @@ export enum ContentSettingsTypes {
   LOCAL_NETWORK = 'local-network',
   LOOPBACK_NETWORK = 'loopback-network',
   MIC = 'media-stream-mic',  // AKA Microphone.
+  NATIVE_GPU = 'native-gpu',
   MIDI_DEVICES = 'midi-sysex',
   MIXEDSCRIPT = 'mixed-script',
   NOTIFICATIONS = 'notifications',

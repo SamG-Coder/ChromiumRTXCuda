@@ -9,6 +9,7 @@
 #include "base/functional/callback_forward.h"
 #include "content/common/content_export.h"
 #include "gpu/config/gpu_preferences.h"
+#include "gpu/ipc/common/native_gpu.mojom-forward.h"
 
 namespace gpu {
 class GpuChannelEstablishFactory;
@@ -20,6 +21,13 @@ CONTENT_EXPORT const gpu::GpuPreferences GetGpuPreferencesFromCommandLine();
 
 // Kills the GPU process with a normal termination status.
 CONTENT_EXPORT void KillGpuProcess();
+
+// The caller must enforce document eligibility and native-gpu permission.
+// client_id is the owning RenderProcessHost ID, never supplied by a renderer.
+CONTENT_EXPORT void DispatchNativeGpuTextureCommand(
+    int32_t client_id,
+    gpu::mojom::NativeGpuTextureCommandPtr command,
+    base::OnceCallback<void(gpu::mojom::NativeGpuTextureResultPtr)> callback);
 
 CONTENT_EXPORT gpu::GpuChannelEstablishFactory* GetGpuChannelEstablishFactory();
 

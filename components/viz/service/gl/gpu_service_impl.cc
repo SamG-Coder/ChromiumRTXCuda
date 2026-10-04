@@ -54,6 +54,7 @@
 #include "gpu/ipc/common/gpu_client_ids.h"
 #include "gpu/ipc/common/gpu_peak_memory.h"
 #include "gpu/ipc/common/memory_stats.h"
+#include "gpu/ipc/common/native_gpu.mojom.h"
 #include "gpu/ipc/service/gpu_channel.h"
 #include "gpu/ipc/service/gpu_channel_manager.h"
 #include "gpu/ipc/service/gpu_watchdog_thread.h"
@@ -100,6 +101,9 @@
 
 #if BUILDFLAG(IS_WIN)
 #include "gpu/command_buffer/service/shared_image/d3d_image_backing_factory.h"
+#include "gpu/command_buffer/service/webgpu_decoder.h"
+#include "gpu/ipc/common/command_buffer_id.h"
+#include "gpu/ipc/service/command_buffer_stub.h"
 #include "mojo/public/cpp/system/platform_handle.h"
 #include "ui/gl/dcomp_surface_registry.h"
 #include "ui/gl/direct_composition_support.h"
@@ -777,6 +781,63 @@ void GpuServiceImpl::RequestDXGIInfo(RequestDXGIInfoCallback callback) {
   main_runner_->PostTask(
       FROM_HERE, base::BindOnce(&GpuServiceImpl::RequestDXGIInfoOnMainThread,
                                 weak_ptr_, std::move(callback)));
+}
+
+void GpuServiceImpl::NativeGPUTextureCommand(
+    int32_t client_id,
+    gpu::mojom::NativeGpuTextureCommandPtr command,
+    NativeGPUTextureCommandCallback callback) {
+  main_runner_->PostTask(
+      FROM_HERE,
+      base::BindOnce(&GpuServiceImpl::NativeGPUTextureCommandOnMainThread,
+                     weak_ptr_, client_id, std::move(command),
+                     base::BindPostTask(io_runner_, std::move(callback))));
+}
+
+void GpuServiceImpl::NativeGPUTextureCommandOnMainThread(
+    int32_t client_id,
+    gpu::mojom::NativeGpuTextureCommandPtr command,
+    NativeGPUTextureCommandCallback callback) {
+  const auto ready = command->ready;
+  auto* channel = gpu_channel_manager_->LookupChannel(client_id);
+  auto* stub =
+      channel ? channel->LookupCommandBuffer(
+                    gpu::RouteIdFromCommandBufferId(ready.command_buffer_id()))
+              : nullptr;
+  if (!stub || !channel->shared_image_stub() || !ready.verified_flush() ||
+      !ready.release_count() ||
+      ready.namespace_id() != gpu::CommandBufferNamespace::GPU_IO ||
+      gpu::ChannelIdFromCommandBufferId(ready.command_buffer_id()) !=
+          client_id) {
+    auto result = gpu::mojom::NativeGpuTextureResult::New();
+    result->error =
+        "The WebGPU command buffer does not belong to this renderer.";
+    std::move(callback).Run(std::move(result));
+    return;
+  }
+  // A separate sequence can wait even when the renderer's flush reaches the
+  // GPU channel after this browser IPC. Waiting on the producing sequence
+  // itself would depend on ordering between two different Mojo pipes.
+  gpu_channel_manager_->scheduler()->ScheduleTask(gpu::Scheduler::Task(
+      channel->shared_image_stub()->sequence(),
+      base::BindOnce(
+          [](base::WeakPtr<gpu::CommandBufferStub> stub,
+             gpu::mojom::NativeGpuTextureCommandPtr command,
+             NativeGPUTextureCommandCallback callback) {
+            auto* decoder = stub && stub->decoder_context()
+                                ? stub->decoder_context()->AsWebGPUDecoder()
+                                : nullptr;
+            if (decoder) {
+              std::move(callback).Run(
+                  decoder->NativeTextureCommand(std::move(command)));
+            } else {
+              auto result = gpu::mojom::NativeGpuTextureResult::New();
+              result->error = "The WebGPU command buffer was lost.";
+              std::move(callback).Run(std::move(result));
+            }
+          },
+          stub->AsWeakPtr(), std::move(command), std::move(callback)),
+      {ready}, gpu::SyncToken()));
 }
 
 void GpuServiceImpl::RequestDXGIInfoOnMainThread(

@@ -56,7 +56,7 @@ IDR_SXS                 ICON       "theme\\google_chrome\\win\\chrome_sxs.ico"
 #elif BUILDFLAG(GOOGLE_CHROME_FOR_TESTING_BRANDING)
 IDR_MAINFRAME           ICON       "theme\\google_chrome\\google_chrome_for_testing\\win\\chrome.ico"
 #else
-IDR_MAINFRAME           ICON       "theme\\chromium\\win\\chromium.ico"
+IDR_MAINFRAME           ICON       "../../rtx_cuda/assets/icon.ico"
 #endif
 
 // Start a naming scheme to keep icons in order. A leading X is used to keep

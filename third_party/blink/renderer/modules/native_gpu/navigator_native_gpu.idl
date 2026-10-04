@@ -1,0 +1,6 @@
+// Copyright 2026 The Chromium Authors. BSD-style license; see LICENSE.
+[ImplementedAs=NativeGPU, SecureContext, RuntimeEnabled=NativeGpu]
+partial interface Navigator {
+  [SameObject] readonly attribute NativeGPU cuda;
+  [SameObject] readonly attribute NativeGPU rtx;
+};

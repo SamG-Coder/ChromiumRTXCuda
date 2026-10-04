@@ -163,6 +163,8 @@ base::span<const PageInfoUI::PermissionUIInfo> GetContentSettingsUIInfo() {
        IDS_SITE_SETTINGS_TYPE_CAPTURED_SURFACE_CONTROL_SHARED_TABS_MID_SENTENCE},
       {ContentSettingsType::KEYBOARD_LOCK, IDS_SITE_SETTINGS_TYPE_KEYBOARD_LOCK,
        IDS_SITE_SETTINGS_TYPE_KEYBOARD_LOCK_MID_SENTENCE},
+      {ContentSettingsType::NATIVE_GPU, IDS_SITE_SETTINGS_TYPE_NATIVE_GPU,
+       IDS_SITE_SETTINGS_TYPE_NATIVE_GPU_MID_SENTENCE},
       {ContentSettingsType::LOCAL_FONTS, IDS_SITE_SETTINGS_TYPE_FONT_ACCESS,
        IDS_SITE_SETTINGS_TYPE_FONT_ACCESS_MID_SENTENCE},
       {ContentSettingsType::IMAGES, IDS_SITE_SETTINGS_TYPE_IMAGES,
@@ -303,6 +305,9 @@ std::u16string GetPermissionAskStateString(ContentSettingsType type) {
       break;
     case ContentSettingsType::LOCAL_FONTS:
       message_id = IDS_PAGE_INFO_STATE_TEXT_FONT_ACCESS_ASK;
+      break;
+    case ContentSettingsType::NATIVE_GPU:
+      message_id = IDS_PAGE_INFO_STATE_TEXT_NATIVE_GPU_ASK;
       break;
     case ContentSettingsType::IDLE_DETECTION:
       message_id = IDS_PAGE_INFO_STATE_TEXT_IDLE_DETECTION_ASK;

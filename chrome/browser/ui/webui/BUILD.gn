@@ -408,6 +408,7 @@ source_set("current_channel_logo") {
   deps = [
     "//base",
     "//build:branding_buildflags",
+    "//chrome/app/theme:chrome_unscaled_resources",
     "//chrome/app/theme:theme_resources",
     "//chrome/common:channel_info",
   ]

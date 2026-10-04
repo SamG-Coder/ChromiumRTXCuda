@@ -120,6 +120,7 @@ function addPrivacyChildRoutes(r: Partial<SettingsRoutes>) {
         r.SITE_SETTINGS_FILE_SYSTEM_WRITE.createChild('siteDetails');
   }
   r.SITE_SETTINGS_LOCAL_FONTS = r.SITE_SETTINGS.createChild('localFonts');
+  r.SITE_SETTINGS_NATIVE_GPU = r.SITE_SETTINGS.createChild('nativeGpu');
   r.SITE_SETTINGS_STORAGE_ACCESS = r.SITE_SETTINGS.createChild('storageAccess');
   r.SITE_SETTINGS_AUTOMATIC_FULLSCREEN =
       r.SITE_SETTINGS.createChild('automaticFullScreen');

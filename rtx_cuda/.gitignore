@@ -1,0 +1,6 @@
+build*/
+node_modules/
+test-results/
+local/
+dist/
+*.log

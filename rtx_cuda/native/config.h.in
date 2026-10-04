@@ -1,0 +1,3 @@
+#pragma once
+#define RTXCUDA_NGX_RUNTIME L"@RTXCUDA_NGX_RUNTIME@"
+#define RTXCUDA_PROJECT_ID "52f4fcac-3d45-462a-b45e-6d53b9444e83"

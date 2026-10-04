@@ -652,4 +652,5 @@ This will otherwise be blocked by your privacy settings. This will allow the con
       Manage
    </message>
   </if>
+  <message name="IDS_NATIVE_GPU_PERMISSION_FRAGMENT" desc="Native GPU permission text in ChromiumRTXCuda.">Run native CUDA code and use RTX graphics on your GPU</message>
 </grit-part>

@@ -1,0 +1,12 @@
+# Copyright 2026 The Chromium Authors. BSD-style license; see LICENSE.
+import("//third_party/blink/renderer/modules/modules.gni")
+
+blink_modules_sources("native_gpu") {
+  sources = [
+    "native_gpu.cc",
+    "native_gpu.h",
+    "native_gpu_frame.cc",
+    "native_gpu_frame.h",
+  ]
+  public_deps = [ "//third_party/blink/renderer/modules/webgpu" ]
+}

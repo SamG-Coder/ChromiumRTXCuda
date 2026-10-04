@@ -2429,6 +2429,7 @@ Called by update_net_error_codes.py.-->
   <int value="145" label="Add Sub Apps without prompts"/>
   <int value="146" label="Inline cue menu"/>
   <int value="147" label="Suspicious site warning data"/>
+  <int value="148" label="NATIVE_GPU"/>
 </enum>
 
 <!-- LINT.ThenChange(//components/content_settings/core/common/content_settings_uma_constants.h:kContentSettingsTypeToHistogramValue) -->
@@ -24107,6 +24108,7 @@ Called by update_net_error_codes.py.-->
   <int value="47" label="PERMISSION_BUBBLE_PERMISSION_GEOLOCATION_APPROXIMATE"/>
   <int value="48" label="PERMISSION_BUBBLE_PERMISSION_GEOLOCATION_UPGRADE"/>
   <int value="49" label="PERMISSION_BUBBLE_PERMISSION_AMBIENT_LOGIN"/>
+  <int value="50" label="NativeGpu"/>
 </enum>
 
 <!-- LINT.ThenChange(//components/permissions/permission_uma_constants.h:RequestTypeForUma) -->
@@ -24163,6 +24165,7 @@ Called by update_net_error_codes.py.-->
   <int value="44" label="PERMISSION_LOCAL_NETWORK"/>
   <int value="45" label="PERMISSION_LOOPBACK_NETWORK"/>
   <int value="46" label="PERMISSION_GEOLOCATION_APPROXIMATE"/>
+  <int value="47" label="NativeGpu"/>
 </enum>
 
 <!-- LINT.ThenChange(//third_party/blink/public/common/permissions/permission_utils.h:PermissionType) -->

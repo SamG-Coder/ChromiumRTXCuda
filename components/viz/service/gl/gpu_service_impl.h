@@ -232,6 +232,10 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
                           GetPeakMemoryUsageCallback callback) override;
 #if BUILDFLAG(IS_WIN)
   void RequestDXGIInfo(RequestDXGIInfoCallback callback) override;
+  void NativeGPUTextureCommand(
+      int32_t client_id,
+      gpu::mojom::NativeGpuTextureCommandPtr command,
+      NativeGPUTextureCommandCallback callback) override;
 #endif
   void LoadedBlob(const gpu::GpuDiskCacheHandle& handle,
                   const std::string& key,
@@ -418,6 +422,10 @@ class VIZ_SERVICE_EXPORT GpuServiceImpl
 
 #if BUILDFLAG(IS_WIN)
   void RequestDXGIInfoOnMainThread(RequestDXGIInfoCallback callback);
+  void NativeGPUTextureCommandOnMainThread(
+      int32_t client_id,
+      gpu::mojom::NativeGpuTextureCommandPtr command,
+      NativeGPUTextureCommandCallback callback);
 #endif
 
   void OnBackgroundedOnMainThread();

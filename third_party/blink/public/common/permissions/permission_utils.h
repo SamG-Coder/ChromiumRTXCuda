@@ -69,6 +69,7 @@ enum class PermissionType {
   LOCAL_NETWORK = 44,
   LOOPBACK_NETWORK = 45,
   GEOLOCATION_APPROXIMATE = 46,
+  NATIVE_GPU = 47,
 
   // Always keep this at the end.
   NUM,

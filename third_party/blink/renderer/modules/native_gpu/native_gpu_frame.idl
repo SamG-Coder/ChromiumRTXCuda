@@ -1,0 +1,10 @@
+// Copyright 2026 The Chromium Authors. BSD-style license; see LICENSE.
+[Exposed=Window, SecureContext, RuntimeEnabled=NativeGpu]
+interface NativeGPUFrame {
+  readonly attribute GPUTexture color;
+  readonly attribute GPUTexture depth;
+  readonly attribute GPUTexture motionVectors;
+  readonly attribute GPUTexture output;
+  [CallWith=ScriptState, RaisesException] Promise<GPUTexture> process(DOMString options);
+  undefined destroy();
+};

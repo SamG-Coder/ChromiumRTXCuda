@@ -174,7 +174,7 @@ IDR_X005_BETA       ICON                        "theme\google_chrome\win\chrome_
 #elif BUILDFLAG(GOOGLE_CHROME_FOR_TESTING_BRANDING)
 IDR_MAINFRAME       ICON                        "theme\google_chrome\google_chrome_for_testing\win\chrome.ico"
 #else
-IDR_MAINFRAME       ICON                        "theme\chromium\win\chromium.ico"
+IDR_MAINFRAME       ICON                        "../../rtx_cuda/assets/icon.ico"
 #endif
 
 // We include these resources because all ICON types need to be in the

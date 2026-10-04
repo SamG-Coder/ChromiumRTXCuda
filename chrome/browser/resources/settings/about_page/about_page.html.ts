@@ -115,6 +115,23 @@ export function getHtml(this: SettingsAboutPageElement) {
     <div class="info-section">
       <div class="secondary">$i18nRaw{aboutProductLicense}</div>
     </div>
+<if expr="is_win and not _google_chrome and not _is_chrome_for_testing_branded">
+    <div class="info-section" id="nativeGpuCredits">
+      <div>ChromiumRTXCuda</div>
+      <div class="secondary">
+        Native CUDA and NVIDIA RTX™ access with website permissions.
+        Optional DLSS processing uses the NVIDIA NGX SDK.
+        NVIDIA SDK and runtime components retain their separate licenses.
+      </div>
+      <div class="secondary">
+        Experimental developer build. Grant native GPU access only to trusted
+        sites; the native helper is not yet a production Chromium sandbox.
+      </div>
+      <a href="https://github.com/SamG-Coder/ChromiumRTXCuda" target="_blank">
+        ChromiumRTXCuda source and documentation
+      </a>
+    </div>
+</if>
 <if expr="_google_chrome or _is_chrome_for_testing_branded">
     <div class="secondary">
       <a id="tos" href="$i18n{aboutTermsURL}">$i18n{aboutProductTos}</a>

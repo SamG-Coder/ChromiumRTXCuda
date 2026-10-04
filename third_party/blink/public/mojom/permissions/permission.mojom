@@ -47,6 +47,7 @@ enum PermissionName {
   WEB_PRINTING,
   SMART_CARD,
   GEOLOCATION_APPROXIMATE,
+  NATIVE_GPU,
 };
 
 struct MidiPermissionDescriptor {

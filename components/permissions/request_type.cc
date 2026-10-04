@@ -131,6 +131,10 @@ const gfx::VectorIcon& GetIconIdDesktop(RequestType type) {
       return ::features::IsRoundedIconsEnabled()
                  ? vector_icons::kFontDownloadIcon
                  : vector_icons::kFontDownloadChromeRefreshOldIcon;
+    case RequestType::kNativeGpu:
+      return ::features::IsRoundedIconsEnabled()
+                 ? vector_icons::kDevicesIcon
+                 : vector_icons::kDevicesOldIcon;
     case RequestType::kLocalNetwork:
       return ::features::IsRoundedIconsEnabled() ? vector_icons::kRouterIcon
                                                  : vector_icons::kRouterOldIcon;
@@ -313,6 +317,8 @@ std::optional<RequestType> ContentSettingsTypeToRequestTypeIfExists(
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
     case ContentSettingsType::LOCAL_FONTS:
       return RequestType::kLocalFonts;
+    case ContentSettingsType::NATIVE_GPU:
+      return RequestType::kNativeGpu;
 #endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
     case ContentSettingsType::GEOLOCATION:
     case ContentSettingsType::GEOLOCATION_WITH_OPTIONS:
@@ -406,6 +412,8 @@ std::optional<ContentSettingsType> RequestTypeToContentSettingsType(
 #if !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
     case RequestType::kLocalFonts:
       return ContentSettingsType::LOCAL_FONTS;
+    case RequestType::kNativeGpu:
+      return ContentSettingsType::NATIVE_GPU;
 #endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
     case RequestType::kLocalNetwork:
       return ContentSettingsType::LOCAL_NETWORK;
@@ -549,6 +557,8 @@ const char* PermissionKeyForRequestType(permissions::RequestType request_type) {
       return "keyboard_lock";
     case permissions::RequestType::kLocalFonts:
       return "local_fonts";
+    case permissions::RequestType::kNativeGpu:
+      return "native_gpu";
 #endif  // !BUILDFLAG(IS_ANDROID) && !BUILDFLAG(IS_IOS)
     case permissions::RequestType::kLocalNetwork:
       return "local_network";

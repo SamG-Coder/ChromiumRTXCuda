@@ -241,6 +241,7 @@ mojom("interfaces") {
     "gpu_peak_memory.mojom",
     "mailbox.mojom",
     "memory_stats.mojom",
+    "native_gpu.mojom",
     "shared_image_capabilities.mojom",
     "shared_image_metadata.mojom",
     "shared_image_pool_id.mojom",

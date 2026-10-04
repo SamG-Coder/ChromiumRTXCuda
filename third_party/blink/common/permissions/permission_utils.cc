@@ -86,6 +86,8 @@ std::string GetPermissionString(PermissionType permission) {
       return "WindowManagement";
     case PermissionType::LOCAL_FONTS:
       return "LocalFonts";
+    case PermissionType::NATIVE_GPU:
+      return "NativeGpu";
     case PermissionType::DISPLAY_CAPTURE:
       return "DisplayCapture";
     case PermissionType::TOP_LEVEL_STORAGE_ACCESS:
@@ -160,6 +162,8 @@ PermissionTypeToPermissionsPolicyFeature(PermissionType permission) {
       return network::mojom::PermissionsPolicyFeature::kWindowManagement;
     case PermissionType::LOCAL_FONTS:
       return network::mojom::PermissionsPolicyFeature::kLocalFonts;
+    case PermissionType::NATIVE_GPU:
+      return network::mojom::PermissionsPolicyFeature::kNativeGpu;
     case PermissionType::DISPLAY_CAPTURE:
       return network::mojom::PermissionsPolicyFeature::kDisplayCapture;
     case PermissionType::CAPTURED_SURFACE_CONTROL:
@@ -331,6 +335,8 @@ std::optional<PermissionType> PermissionDescriptorInfoToPermissionType(
       return PermissionType::WINDOW_MANAGEMENT;
     case PermissionName::LOCAL_FONTS:
       return PermissionType::LOCAL_FONTS;
+    case PermissionName::NATIVE_GPU:
+      return PermissionType::NATIVE_GPU;
     case PermissionName::DISPLAY_CAPTURE:
       return PermissionType::DISPLAY_CAPTURE;
     case PermissionName::TOP_LEVEL_STORAGE_ACCESS:

@@ -66,6 +66,7 @@ bool IsAllowlistedPermissionType(PermissionType permission) {
     case PermissionType::CAMERA_PAN_TILT_ZOOM:
     case PermissionType::WINDOW_MANAGEMENT:
     case PermissionType::LOCAL_FONTS:
+    case PermissionType::NATIVE_GPU:
     case PermissionType::DISPLAY_CAPTURE:
     case PermissionType::TOP_LEVEL_STORAGE_ACCESS:
     case PermissionType::CAPTURED_SURFACE_CONTROL:

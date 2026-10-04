@@ -1,0 +1,6 @@
+Native GPU permission supports prompt, granted, and denied states.
+Native GPU policy present: true
+prompt
+granted
+denied
+

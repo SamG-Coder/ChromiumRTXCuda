@@ -23,9 +23,11 @@
 #include "gpu/command_buffer/service/service_utils.h"
 #include "gpu/config/gpu_finch_features.h"
 #include "gpu/config/gpu_switches.h"
+#include "gpu/ipc/common/native_gpu.mojom.h"
 #include "media/base/media_switches.h"
 #include "media/gpu/buildflags.h"
 #include "media/media_buildflags.h"
+#include "mojo/public/cpp/bindings/callback_helpers.h"
 #include "third_party/blink/public/common/features.h"
 #include "ui/gfx/switches.h"
 #include "ui/gl/gl_features.h"
@@ -127,6 +129,31 @@ void KillGpuProcess() {
   GpuProcessHost::CallOnUI(FROM_HERE, GPU_PROCESS_KIND_SANDBOXED,
                            false /* force_create */,
                            base::BindOnce(&KillGpuProcessImpl));
+}
+
+void DispatchNativeGpuTextureCommand(
+    int32_t client_id,
+    gpu::mojom::NativeGpuTextureCommandPtr command,
+    base::OnceCallback<void(gpu::mojom::NativeGpuTextureResultPtr)> callback) {
+  auto failure = gpu::mojom::NativeGpuTextureResult::New();
+  failure->error = "The GPU service is unavailable.";
+  callback = mojo::WrapCallbackWithDefaultInvokeIfNotRun(std::move(callback),
+                                                         std::move(failure));
+#if BUILDFLAG(IS_WIN)
+  GpuProcessHost::CallOnUI(
+      FROM_HERE, GPU_PROCESS_KIND_SANDBOXED, false,
+      base::BindOnce(
+          [](int32_t client_id, gpu::mojom::NativeGpuTextureCommandPtr command,
+             base::OnceCallback<void(gpu::mojom::NativeGpuTextureResultPtr)>
+                 callback,
+             GpuProcessHost* host) {
+            if (host) {
+              host->gpu_service()->NativeGPUTextureCommand(
+                  client_id, std::move(command), std::move(callback));
+            }
+          },
+          client_id, std::move(command), std::move(callback)));
+#endif
 }
 
 gpu::GpuChannelEstablishFactory* GetGpuChannelEstablishFactory() {
