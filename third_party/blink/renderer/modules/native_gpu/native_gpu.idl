@@ -12,4 +12,12 @@ interface NativeGPU {
       [EnforceRange] unsigned long outputWidth, [EnforceRange] unsigned long outputHeight,
       DOMString quality, boolean depthInverted);
   undefined close();
+  [CallWith=ScriptState, RaisesException] Promise<DOMString> getInteropCapabilities(GPUDevice device);
+  [CallWith=ScriptState, RaisesException] Promise<NativeGPUResource> createSharedBuffer(
+      GPUDevice device, [EnforceRange] unsigned long long size, [EnforceRange] unsigned long usage);
+  [CallWith=ScriptState, RaisesException] Promise<NativeGPUResource> createSharedTexture(
+      GPUDevice device, [EnforceRange] unsigned long width, [EnforceRange] unsigned long height,
+      DOMString format, [EnforceRange] unsigned long usage);
+  [CallWith=ScriptState, RaisesException] Promise<DOMString> dispatchShared(
+      sequence<NativeGPUResource> resources, DOMString jobs);
 };

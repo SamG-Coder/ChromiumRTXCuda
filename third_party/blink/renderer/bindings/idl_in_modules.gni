@@ -514,6 +514,7 @@ static_idl_files_in_modules = [
   "//third_party/blink/renderer/modules/mojo/mojo_file_system_access.idl",
   "//third_party/blink/renderer/modules/native_gpu/native_gpu.idl",
   "//third_party/blink/renderer/modules/native_gpu/native_gpu_frame.idl",
+  "//third_party/blink/renderer/modules/native_gpu/native_gpu_resource.idl",
   "//third_party/blink/renderer/modules/native_gpu/navigator_native_gpu.idl",
   "//third_party/blink/renderer/modules/navigatorcontentutils/navigator_content_utils.idl",
   "//third_party/blink/renderer/modules/netinfo/navigator_network_information.idl",

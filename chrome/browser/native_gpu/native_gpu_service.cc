@@ -98,8 +98,10 @@ class GpuProcess {
     if (!parsed || !parsed->is_dict()) {
       return Failure("GPU payload must be a JSON object.");
     }
-    if (operation == "rtx.processSharedFrame") {
-      if (fences.size() > 16 || fences.size() != fence_values.size()) {
+    if (operation == "rtx.processSharedFrame" ||
+        operation == "interop.dispatch") {
+      if (fences.size() > (operation == "interop.dispatch" ? 1024U : 16U) ||
+          fences.size() != fence_values.size()) {
         return Failure("Invalid WebGPU fences.");
       }
       base::ListValue handles, values;
@@ -143,11 +145,13 @@ class GpuProcess {
       return Failure("Native GPU response ID mismatch.");
     }
     GpuResponse response(std::move(result));
-    if (operation == "rtx.createSharedFrame" &&
+    if ((operation == "rtx.createSharedFrame" ||
+         operation == "interop.create") &&
         reply->FindBool("ok").value_or(false)) {
       const auto* value = reply->FindDict("result");
       const auto* handles = value ? value->FindList("handles") : nullptr;
-      if (!handles || handles->size() != 4) {
+      if (!handles ||
+          handles->size() != (operation == "interop.create" ? 2U : 4U)) {
         return Failure("Invalid native shared texture handles.");
       }
       for (const auto& handle : *handles) {
@@ -385,6 +389,12 @@ void NativeGpuService::Execute(const std::string& operation,
     std::move(callback).Run(false, "Unsupported native GPU operation.");
     return;
   }
+  if (operation == "cuda.dispose" &&
+      (!shared_resources_.empty() || interop_busy_)) {
+    std::move(callback).Run(false,
+                            "Close shared resources before disposing CUDA.");
+    return;
+  }
   CallHost(operation, payload, std::move(callback));
 }
 void NativeGpuService::CallHost(const std::string& operation,
@@ -488,6 +498,18 @@ void NativeGpuService::Reply(bool privileged,
 }
 void NativeGpuService::StopProcess() {
   stopped_ = true;
+  for (const auto& [id, resource] : shared_resources_) {
+    auto command = gpu::mojom::NativeGpuTextureCommand::New();
+    command->action = gpu::mojom::NativeGpuTextureAction::kDestroyResource;
+    command->fence_value = UINT64_MAX;
+    command->frame = resource.token;
+    command->ready = resource.ready;
+    content::DispatchNativeGpuTextureCommand(
+        render_frame_host().GetProcess()->GetDeprecatedID(), std::move(command),
+        base::BindOnce([](gpu::mojom::NativeGpuTextureResultPtr) {}));
+  }
+  shared_resources_.clear();
+  interop_busy_ = false;
   DestroySharedFrame();
   if (job_.is_valid()) {
     TerminateJobObject(job_.get(), 8);
@@ -719,6 +741,314 @@ void NativeGpuService::DestroyDLSSFrame(uint32_t id) {
   CallHost("rtx.destroySharedFrame", "{}",
            base::BindOnce([](bool, const std::string&) {}));
 }
+bool NativeGpuService::ValidInteropDevice(const gpu::SyncToken& ready) const {
+  return Status() == blink::mojom::PermissionStatus::GRANTED &&
+         ready.verified_flush() && ready.release_count() &&
+         ready.namespace_id() == gpu::CommandBufferNamespace::GPU_IO &&
+         gpu::ChannelIdFromCommandBufferId(ready.command_buffer_id()) ==
+             render_frame_host().GetProcess()->GetDeprecatedID();
+}
+void NativeGpuService::QueryInterop(
+    gpu::mojom::NativeGpuResourceDescriptorPtr device,
+    QueryInteropCallback callback) {
+  if (!ValidInteropDevice(device->ready)) {
+    std::move(callback).Run(
+        false, "Native GPU permission and a live WebGPU device are required.");
+    return;
+  }
+  auto command = gpu::mojom::NativeGpuTextureCommand::New();
+  command->action = gpu::mojom::NativeGpuTextureAction::kProbeInterop;
+  command->frame = base::UnguessableToken::Create();
+  command->ready = device->ready;
+  command->resource = std::move(device);
+  content::DispatchNativeGpuTextureCommand(
+      render_frame_host().GetProcess()->GetDeprecatedID(), std::move(command),
+      base::BindOnce(
+          [](base::WeakPtr<NativeGpuService> self,
+             QueryInteropCallback callback,
+             gpu::mojom::NativeGpuTextureResultPtr result) {
+            if (!self || !result->success) {
+              std::move(callback).Run(false, result->error);
+              return;
+            }
+            auto payload =
+                base::WriteJson(
+                    base::DictValue()
+                        .Set("adapterLuidLow",
+                             static_cast<double>(result->adapter_luid_low))
+                        .Set("adapterLuidHigh", result->adapter_luid_high))
+                    .value_or("{}");
+            self->CallHost("interop.probe", payload, std::move(callback));
+          },
+          weak_factory_.GetWeakPtr(), std::move(callback)));
+}
+void NativeGpuService::CreateSharedResource(
+    gpu::mojom::NativeGpuResourceDescriptorPtr desc,
+    CreateSharedResourceCallback callback) {
+  const bool format =
+      desc->format == "rgba8unorm" || desc->format == "rgba16float" ||
+      desc->format == "rgba32float" || desc->format == "r32float";
+  const uint32_t texel_bytes = desc->format == "rgba32float"   ? 16
+                               : desc->format == "rgba16float" ? 8
+                                                               : 4;
+  if (!ValidInteropDevice(desc->ready) || stopped_ || interop_busy_ ||
+      shared_resources_.size() >= 256 || !desc->usage ||
+      (desc->texture
+           ? (!format || !desc->width || !desc->height || desc->width > 8192 ||
+              desc->height > 8192 || (desc->usage & ~31U) ||
+              uint64_t(desc->width) * desc->height * texel_bytes >
+                  256ULL * 1024 * 1024)
+           : (desc->size < 4 || desc->size % 4 ||
+              desc->size > 256ULL * 1024 * 1024 || (desc->usage & ~444U)))) {
+    std::move(callback).Run(
+        0, "Invalid shared resource, permission, or busy/closed session.");
+    return;
+  }
+  interop_busy_ = true;
+  const auto id = ++next_shared_id_;
+  shared_resources_.emplace(
+      id, SharedResource{base::UnguessableToken::Create(), desc->ready,
+                         desc->device_id, desc->device_generation, 0,
+                         desc->texture});
+  auto payload =
+      base::WriteJson(base::DictValue()
+                          .Set("texture", desc->texture)
+                          .Set("size", static_cast<int>(desc->size))
+                          .Set("width", static_cast<int>(desc->width))
+                          .Set("height", static_cast<int>(desc->height))
+                          .Set("format", desc->format)
+                          .Set("usage", static_cast<int>(desc->usage)))
+          .value_or("{}");
+  CallHostWithHandles(
+      "interop.create", payload,
+      base::BindOnce(
+          [](base::WeakPtr<NativeGpuService> self, uint32_t id,
+             gpu::mojom::NativeGpuResourceDescriptorPtr desc,
+             CreateSharedResourceCallback callback, bool success,
+             std::string text, std::vector<mojo::PlatformHandle> handles) {
+            if (!self || !self->shared_resources_.contains(id)) {
+              std::move(callback).Run(0, "The native session was closed.");
+              return;
+            }
+            auto info =
+                success ? base::JSONReader::ReadDict(text, base::JSON_PARSE_RFC)
+                        : std::nullopt;
+            auto native_id = info ? info->FindInt("id") : std::nullopt;
+            auto low = info ? info->FindDouble("adapterLuidLow") : std::nullopt;
+            auto high = info ? info->FindInt("adapterLuidHigh") : std::nullopt;
+            if (!native_id || *native_id <= 0 || !low || !high || *low < 0 ||
+                *low > UINT32_MAX || handles.size() != 2) {
+              self->StopProcess();
+              std::move(callback).Run(
+                  0, success ? "Invalid shared resource result." : text);
+              return;
+            }
+            auto& resource = self->shared_resources_.at(id);
+            resource.native_id = *native_id;
+            auto command = gpu::mojom::NativeGpuTextureCommand::New();
+            command->action =
+                gpu::mojom::NativeGpuTextureAction::kCreateResource;
+            command->frame = resource.token;
+            command->ready = resource.ready;
+            command->resource = std::move(desc);
+            command->handles = std::move(handles);
+            command->adapter_luid_low = static_cast<uint32_t>(*low);
+            command->adapter_luid_high = *high;
+            content::DispatchNativeGpuTextureCommand(
+                self->render_frame_host().GetProcess()->GetDeprecatedID(),
+                std::move(command),
+                base::BindOnce(
+                    [](base::WeakPtr<NativeGpuService> self, uint32_t id,
+                       CreateSharedResourceCallback callback,
+                       gpu::mojom::NativeGpuTextureResultPtr result) {
+                      if (!self || !self->shared_resources_.contains(id)) {
+                        std::move(callback).Run(
+                            0, "The native session was closed.");
+                        return;
+                      }
+                      self->interop_busy_ = false;
+                      if (!result->success ||
+                          self->Status() !=
+                              blink::mojom::PermissionStatus::GRANTED) {
+                        self->StopProcess();
+                        std::move(callback).Run(0, result->error);
+                        return;
+                      }
+                      std::move(callback).Run(id, "");
+                    },
+                    self, id, std::move(callback)));
+          },
+          weak_factory_.GetWeakPtr(), id, std::move(desc),
+          std::move(callback)));
+}
+void NativeGpuService::DispatchShared(const std::vector<uint32_t>& ids,
+                                      const gpu::SyncToken& ready,
+                                      const std::string& text,
+                                      DispatchSharedCallback callback) {
+  auto data = text.size() <= kMessageLimit
+                  ? base::JSONReader::ReadDict(text, base::JSON_PARSE_RFC)
+                  : std::nullopt;
+  auto* session = data ? data->FindString("$session") : nullptr;
+  auto* jobs = data ? data->FindList("jobs") : nullptr;
+  if (stopped_ || interop_busy_ || !ValidInteropDevice(ready) || ids.empty() ||
+      ids.size() > 256 || !session || *session != session_token_.ToString() ||
+      !jobs || jobs->empty() || jobs->size() > 256) {
+    std::move(callback).Run(
+        false, "Invalid shared dispatch, permission, or CUDA session.");
+    return;
+  }
+  auto command = gpu::mojom::NativeGpuTextureCommand::New();
+  command->action = gpu::mojom::NativeGpuTextureAction::kReleaseResources;
+  command->frame = base::UnguessableToken::Create();
+  command->ready = ready;
+  base::ListValue native_ids;
+  std::map<uint32_t, SharedResource*> selected;
+  SharedResource* first = nullptr;
+  for (auto id : ids) {
+    auto found = shared_resources_.find(id);
+    if (found == shared_resources_.end() || selected.contains(id)) {
+      std::move(callback).Run(
+          false, "Unknown, destroyed, or duplicate shared resource.");
+      return;
+    }
+    auto& resource = found->second;
+    if (ready.command_buffer_id() != resource.ready.command_buffer_id() ||
+        ready.release_count() <= resource.ready.release_count() ||
+        (first && (first->device_id != resource.device_id ||
+                   first->device_generation != resource.device_generation))) {
+      std::move(callback).Run(
+          false, "All resources must belong to the same live WebGPU device.");
+      return;
+    }
+    first = &resource;
+    selected.emplace(id, &resource);
+    native_ids.Append(static_cast<int>(resource.native_id));
+    command->resources.push_back(resource.token);
+  }
+  // Translate opaque document resource IDs. A caller cannot use a raw CUDA
+  // pointer, OS handle, stale session ID, or a resource it did not acquire.
+  for (auto& job : *jobs) {
+    auto* args = job.is_dict() ? job.GetDict().FindList("arguments") : nullptr;
+    if (!args) {
+      std::move(callback).Run(false, "Invalid CUDA arguments.");
+      return;
+    }
+    for (auto& arg : *args) {
+      if (!arg.is_dict()) {
+        std::move(callback).Run(false, "Invalid CUDA argument.");
+        return;
+      }
+      for (const char* key : {"buffer", "surface"}) {
+        if (!arg.GetDict().contains(key)) {
+          continue;
+        }
+        auto id = arg.GetDict().FindInt(key);
+        if (!id || *id <= 0 || !selected.contains(*id) ||
+            selected.at(*id)->texture != (std::string_view(key) == "surface")) {
+          std::move(callback).Run(
+              false, "CUDA argument is not an acquired shared resource.");
+          return;
+        }
+        arg.GetDict().Set(key, static_cast<int>(selected.at(*id)->native_id));
+      }
+    }
+  }
+  for (const auto& [id, resource] : selected) {
+    resource->ready = ready;
+  }
+  data->Set("resources", std::move(native_ids));
+  interop_busy_ = true;
+  auto acquire = command.Clone();
+  acquire->action = gpu::mojom::NativeGpuTextureAction::kAcquireResources;
+  content::DispatchNativeGpuTextureCommand(
+      render_frame_host().GetProcess()->GetDeprecatedID(), std::move(command),
+      base::BindOnce(&NativeGpuService::ReleaseInteropReply,
+                     weak_factory_.GetWeakPtr(), std::move(acquire),
+                     base::WriteJson(*data).value_or("{}"),
+                     std::move(callback)));
+}
+void NativeGpuService::ReleaseInteropReply(
+    gpu::mojom::NativeGpuTextureCommandPtr acquire,
+    std::string payload,
+    DispatchSharedCallback callback,
+    gpu::mojom::NativeGpuTextureResultPtr result) {
+  if (stopped_ || !result->success ||
+      Status() != blink::mojom::PermissionStatus::GRANTED) {
+    StopProcess();
+    std::move(callback).Run(
+        false, result->success ? "Native access revoked." : result->error);
+    return;
+  }
+  CallHostWithHandles("interop.dispatch", payload,
+                      base::BindOnce(&NativeGpuService::DispatchInteropReply,
+                                     weak_factory_.GetWeakPtr(),
+                                     std::move(acquire), std::move(callback)),
+                      std::move(result->fences),
+                      std::move(result->fence_values));
+}
+void NativeGpuService::DispatchInteropReply(
+    gpu::mojom::NativeGpuTextureCommandPtr acquire,
+    DispatchSharedCallback callback,
+    bool success,
+    std::string text,
+    std::vector<mojo::PlatformHandle>) {
+  auto info = success ? base::JSONReader::ReadDict(text, base::JSON_PARSE_RFC)
+                      : std::nullopt;
+  const auto* value = info ? info->FindString("fenceValue") : nullptr;
+  if (stopped_ || !value ||
+      !base::StringToUint64(*value, &acquire->fence_value) ||
+      !acquire->fence_value) {
+    StopProcess();
+    std::move(callback).Run(
+        false, success ? "CUDA did not queue a completion signal." : text);
+    return;
+  }
+  content::DispatchNativeGpuTextureCommand(
+      render_frame_host().GetProcess()->GetDeprecatedID(), std::move(acquire),
+      base::BindOnce(
+          [](base::WeakPtr<NativeGpuService> self,
+             DispatchSharedCallback callback,
+             gpu::mojom::NativeGpuTextureResultPtr result) {
+            if (!self || self->stopped_ ||
+                self->Status() != blink::mojom::PermissionStatus::GRANTED) {
+              std::move(callback).Run(false, "Native access revoked.");
+              return;
+            }
+            self->interop_busy_ = false;
+            if (!result->success) {
+              self->StopProcess();
+            }
+            std::move(callback).Run(
+                result->success,
+                result->success ? "{\"gpuWaitQueued\":true}" : result->error);
+          },
+          weak_factory_.GetWeakPtr(), std::move(callback)));
+}
+void NativeGpuService::DestroySharedResource(uint32_t id) {
+  auto found = shared_resources_.find(id);
+  if (found == shared_resources_.end()) {
+    return;
+  }
+  if (interop_busy_) {
+    StopProcess();
+    return;
+  }
+  auto resource = found->second;
+  shared_resources_.erase(found);
+  auto command = gpu::mojom::NativeGpuTextureCommand::New();
+  command->action = gpu::mojom::NativeGpuTextureAction::kDestroyResource;
+  command->frame = resource.token;
+  command->ready = resource.ready;
+  content::DispatchNativeGpuTextureCommand(
+      render_frame_host().GetProcess()->GetDeprecatedID(), std::move(command),
+      base::BindOnce([](gpu::mojom::NativeGpuTextureResultPtr) {}));
+  CallHost("interop.destroy",
+           base::WriteJson(base::DictValue().Set(
+                               "id", static_cast<int>(resource.native_id)))
+               .value_or("{}"),
+           base::BindOnce([](bool, const std::string&) {}));
+}
+
 void NativeGpuService::PermissionChanged(content::PermissionResult result) {
   if (result.status != blink::mojom::PermissionStatus::GRANTED) {
     StopProcess();

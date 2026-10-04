@@ -11,6 +11,7 @@
 namespace blink {
 class Navigator;
 class NativeGPUFrame;
+class NativeGPUResource;
 class GPUDevice;
 class GPUTexture;
 class NativeGPU final : public ScriptWrappable,
@@ -46,6 +47,27 @@ class NativeGPU final : public ScriptWrappable,
                                          const String&,
                                          ExceptionState&);
   void DestroyFrame(uint32_t);
+  ScriptPromise<IDLString> getInteropCapabilities(ScriptState*,
+                                                  GPUDevice*,
+                                                  ExceptionState&);
+  ScriptPromise<NativeGPUResource> createSharedBuffer(ScriptState*,
+                                                      GPUDevice*,
+                                                      uint64_t,
+                                                      uint32_t,
+                                                      ExceptionState&);
+  ScriptPromise<NativeGPUResource> createSharedTexture(ScriptState*,
+                                                       GPUDevice*,
+                                                       uint32_t,
+                                                       uint32_t,
+                                                       const String&,
+                                                       uint32_t,
+                                                       ExceptionState&);
+  ScriptPromise<IDLString> dispatchShared(
+      ScriptState*,
+      const HeapVector<Member<NativeGPUResource>>&,
+      const String&,
+      ExceptionState&);
+  void DestroyResource(NativeGPUResource*);
   void ContextDestroyed() override;
   void Trace(Visitor*) const override;
 
@@ -55,9 +77,15 @@ class NativeGPU final : public ScriptWrappable,
                                          bool cuda,
                                          ExceptionState&);
   void Disconnected();
+  ScriptPromise<NativeGPUResource> CreateResource(
+      ScriptState*,
+      GPUDevice*,
+      gpu::mojom::blink::NativeGpuResourceDescriptorPtr,
+      ExceptionState&);
   HeapMojoRemote<mojom::blink::NativeGpuService> remote_;
   HeapHashSet<Member<ScriptPromiseResolverBase>> pending_;
   Member<NativeGPUFrame> frame_;
+  HeapHashSet<Member<NativeGPUResource>> resources_;
 };
 }  // namespace blink
 #endif

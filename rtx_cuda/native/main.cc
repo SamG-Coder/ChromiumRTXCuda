@@ -85,7 +85,8 @@ int main(int argc, char** argv) {
       Json result;
       if (operation == "probe") {
         result = Probe(cuda, rtx);
-      } else if (operation.starts_with("cuda.")) {
+      } else if (operation.starts_with("cuda.") ||
+                 operation.starts_with("interop.")) {
         result = cuda.Handle(operation, request.at("payload"));
       } else if (operation == "rtx.render") {
         result = rtx.Render(request.at("payload"));

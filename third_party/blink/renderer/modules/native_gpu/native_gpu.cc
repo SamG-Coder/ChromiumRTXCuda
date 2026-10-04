@@ -11,6 +11,7 @@
 #include "third_party/blink/renderer/core/frame/local_dom_window.h"
 #include "third_party/blink/renderer/core/frame/navigator.h"
 #include "third_party/blink/renderer/modules/native_gpu/native_gpu_frame.h"
+#include "third_party/blink/renderer/modules/native_gpu/native_gpu_resource.h"
 #include "third_party/blink/renderer/platform/bindings/exception_state.h"
 #include "third_party/blink/renderer/platform/bindings/script_state.h"
 #include "third_party/blink/renderer/platform/wtf/functional.h"
@@ -286,6 +287,235 @@ void NativeGPU::DestroyFrame(uint32_t id) {
   }
 }
 
+ScriptPromise<IDLString> NativeGPU::getInteropCapabilities(
+    ScriptState* state,
+    GPUDevice* device,
+    ExceptionState& exception) {
+  if (!EnsureRemote(state, exception)) {
+    return {};
+  }
+  auto context = device->GetContextProviderWeakPtr();
+  if (!context) {
+    exception.ThrowDOMException(DOMExceptionCode::kInvalidStateError,
+                                "The WebGPU device is unavailable.");
+    return {};
+  }
+  auto* webgpu = context->ContextProvider().WebGPUInterface();
+  auto descriptor = gpu::mojom::blink::NativeGpuResourceDescriptor::New();
+  descriptor->format = "";
+  auto [id, generation] =
+      webgpu->GetDeviceWireHandle(device->GetHandle().Get());
+  descriptor->device_id = id;
+  descriptor->device_generation = generation;
+  device->FlushNow();
+  webgpu->GenSyncTokenCHROMIUM(descriptor->ready.GetData());
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLString>>(
+      state, exception.GetContext());
+  pending_.insert(resolver);
+  remote_->QueryInterop(
+      std::move(descriptor),
+      resolver->WrapCallbackInScriptScope(BindOnce(
+          [](NativeGPU* self, ScriptPromiseResolver<IDLString>* resolver,
+             bool success, const String& result) {
+            self->pending_.erase(resolver);
+            if (success) {
+              resolver->Resolve(result);
+            } else {
+              resolver->Reject(MakeGarbageCollected<DOMException>(
+                  DOMExceptionCode::kNotSupportedError, result));
+            }
+          },
+          WrapPersistent(this))));
+  return resolver->Promise();
+}
+ScriptPromise<NativeGPUResource> NativeGPU::createSharedBuffer(
+    ScriptState* state,
+    GPUDevice* device,
+    uint64_t size,
+    uint32_t usage,
+    ExceptionState& exception) {
+  auto descriptor = gpu::mojom::blink::NativeGpuResourceDescriptor::New();
+  descriptor->format = "";
+  descriptor->size = size;
+  descriptor->usage = usage;
+  return CreateResource(state, device, std::move(descriptor), exception);
+}
+ScriptPromise<NativeGPUResource> NativeGPU::createSharedTexture(
+    ScriptState* state,
+    GPUDevice* device,
+    uint32_t width,
+    uint32_t height,
+    const String& format,
+    uint32_t usage,
+    ExceptionState& exception) {
+  auto descriptor = gpu::mojom::blink::NativeGpuResourceDescriptor::New();
+  descriptor->texture = true;
+  descriptor->width = width;
+  descriptor->height = height;
+  descriptor->format = format;
+  descriptor->usage = usage;
+  return CreateResource(state, device, std::move(descriptor), exception);
+}
+ScriptPromise<NativeGPUResource> NativeGPU::CreateResource(
+    ScriptState* state,
+    GPUDevice* device,
+    gpu::mojom::blink::NativeGpuResourceDescriptorPtr descriptor,
+    ExceptionState& exception) {
+  if (!EnsureRemote(state, exception)) {
+    return {};
+  }
+  auto context = device->GetContextProviderWeakPtr();
+  wgpu::TextureFormat format = wgpu::TextureFormat::Undefined;
+  if (descriptor->format == "rgba8unorm") {
+    format = wgpu::TextureFormat::RGBA8Unorm;
+  }
+  if (descriptor->format == "rgba16float") {
+    format = wgpu::TextureFormat::RGBA16Float;
+  }
+  if (descriptor->format == "rgba32float") {
+    format = wgpu::TextureFormat::RGBA32Float;
+  }
+  if (descriptor->format == "r32float") {
+    format = wgpu::TextureFormat::R32Float;
+  }
+  const uint32_t texel_bytes = descriptor->format == "rgba32float"   ? 16
+                               : descriptor->format == "rgba16float" ? 8
+                                                                     : 4;
+  if (!context || resources_.size() >= 256 || !descriptor->usage ||
+      (descriptor->texture
+           ? (format == wgpu::TextureFormat::Undefined || !descriptor->width ||
+              !descriptor->height || descriptor->width > 8192 ||
+              descriptor->height > 8192 || (descriptor->usage & ~31U) ||
+              uint64_t(descriptor->width) * descriptor->height * texel_bytes >
+                  256ULL * 1024 * 1024)
+           : (descriptor->size < 4 || descriptor->size > 256ULL * 1024 * 1024 ||
+              descriptor->size % 4 || (descriptor->usage & ~444U)))) {
+    exception.ThrowDOMException(
+        DOMExceptionCode::kNotSupportedError,
+        "Unsupported shared resource descriptor or device.");
+    return {};
+  }
+  auto* webgpu = context->ContextProvider().WebGPUInterface();
+  GPUBuffer* buffer = nullptr;
+  GPUTexture* texture = nullptr;
+  if (descriptor->texture) {
+    wgpu::TextureDescriptor desc;
+    desc.size = {descriptor->width, descriptor->height, 1};
+    desc.format = format;
+    desc.usage = static_cast<wgpu::TextureUsage>(descriptor->usage);
+    const auto reserved = webgpu->ReserveTexture(
+        device->GetHandle().Get(),
+        &static_cast<const WGPUTextureDescriptor&>(desc));
+    descriptor->id = reserved.id;
+    descriptor->generation = reserved.generation;
+    descriptor->device_id = reserved.deviceId;
+    descriptor->device_generation = reserved.deviceGeneration;
+    texture = MakeGarbageCollected<GPUTexture>(
+        device, wgpu::Texture::Acquire(reserved.texture),
+        "CUDA shared texture");
+  } else {
+    wgpu::BufferDescriptor desc;
+    desc.size = descriptor->size;
+    desc.usage = static_cast<wgpu::BufferUsage>(descriptor->usage);
+    const auto reserved =
+        webgpu->ReserveBuffer(device->GetHandle().Get(),
+                              &static_cast<const WGPUBufferDescriptor&>(desc));
+    descriptor->id = reserved.id;
+    descriptor->generation = reserved.generation;
+    descriptor->device_id = reserved.deviceId;
+    descriptor->device_generation = reserved.deviceGeneration;
+    buffer = MakeGarbageCollected<GPUBuffer>(
+        device, desc.size, wgpu::Buffer::Acquire(reserved.buffer),
+        "CUDA shared buffer");
+  }
+  device->FlushNow();
+  webgpu->GenSyncTokenCHROMIUM(descriptor->ready.GetData());
+  auto* resource =
+      MakeGarbageCollected<NativeGPUResource>(this, device, buffer, texture);
+  resources_.insert(resource);
+  auto* resolver =
+      MakeGarbageCollected<ScriptPromiseResolver<NativeGPUResource>>(
+          state, exception.GetContext());
+  pending_.insert(resolver);
+  remote_->CreateSharedResource(
+      std::move(descriptor),
+      resolver->WrapCallbackInScriptScope(BindOnce(
+          [](NativeGPU* self, NativeGPUResource* resource,
+             ScriptPromiseResolver<NativeGPUResource>* resolver, uint32_t id,
+             const String& error) {
+            self->pending_.erase(resolver);
+            if (id) {
+              resource->SetId(id);
+              resolver->Resolve(resource);
+            } else {
+              self->resources_.erase(resource);
+              resource->Invalidate();
+              resolver->Reject(MakeGarbageCollected<DOMException>(
+                  DOMExceptionCode::kOperationError, error));
+            }
+          },
+          WrapPersistent(this), WrapPersistent(resource))));
+  return resolver->Promise();
+}
+ScriptPromise<IDLString> NativeGPU::dispatchShared(
+    ScriptState* state,
+    const HeapVector<Member<NativeGPUResource>>& resources,
+    const String& jobs,
+    ExceptionState& exception) {
+  if (!EnsureRemote(state, exception)) {
+    return {};
+  }
+  GPUDevice* device = resources.empty() ? nullptr : resources[0]->device();
+  if (!device || resources.size() > 256 || jobs.length() > 900 * 1024 ||
+      !device->GetContextProviderWeakPtr()) {
+    exception.ThrowDOMException(
+        DOMExceptionCode::kInvalidStateError,
+        "Shared dispatch requires live resources and a live device.");
+    return {};
+  }
+  Vector<uint32_t> ids;
+  for (auto& resource : resources) {
+    if (resource->owner() != this || resource->device() != device ||
+        !resource->id()) {
+      exception.ThrowDOMException(
+          DOMExceptionCode::kInvalidStateError,
+          "Resources must belong to this session and one WebGPU device.");
+      return {};
+    }
+    ids.push_back(resource->id());
+  }
+  device->FlushNow();
+  gpu::SyncToken ready;
+  device->GetContextProviderWeakPtr()
+      ->ContextProvider()
+      .WebGPUInterface()
+      ->GenSyncTokenCHROMIUM(ready.GetData());
+  auto* resolver = MakeGarbageCollected<ScriptPromiseResolver<IDLString>>(
+      state, exception.GetContext());
+  pending_.insert(resolver);
+  remote_->DispatchShared(
+      ids, ready, jobs,
+      resolver->WrapCallbackInScriptScope(BindOnce(
+          [](NativeGPU* self, ScriptPromiseResolver<IDLString>* resolver,
+             bool success, const String& result) {
+            self->pending_.erase(resolver);
+            if (success) {
+              resolver->Resolve(result);
+            } else {
+              resolver->Reject(MakeGarbageCollected<DOMException>(
+                  DOMExceptionCode::kOperationError, result));
+            }
+          },
+          WrapPersistent(this))));
+  return resolver->Promise();
+}
+void NativeGPU::DestroyResource(NativeGPUResource* resource) {
+  if (remote_.is_bound()) {
+    remote_->DestroySharedResource(resource->id());
+  }
+  resources_.erase(resource);
+}
+
 void NativeGPU::Disconnected() {
   remote_.reset();
   for (auto& resolver : pending_) {
@@ -297,6 +527,10 @@ void NativeGPU::Disconnected() {
     frame_->SetId(0);
   }
   frame_.Clear();
+  for (auto& resource : resources_) {
+    resource->Invalidate();
+  }
+  resources_.clear();
 }
 void NativeGPU::close() {
   if (remote_.is_bound()) {
@@ -312,6 +546,7 @@ void NativeGPU::Trace(Visitor* visitor) const {
   visitor->Trace(remote_);
   visitor->Trace(pending_);
   visitor->Trace(frame_);
+  visitor->Trace(resources_);
   ScriptWrappable::Trace(visitor);
   Supplement<Navigator>::Trace(visitor);
   ExecutionContextLifecycleObserver::Trace(visitor);

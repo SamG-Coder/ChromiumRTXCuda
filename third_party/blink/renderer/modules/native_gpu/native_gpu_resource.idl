@@ -1,0 +1,9 @@
+// Copyright 2026 The Chromium Authors. BSD-style license; see LICENSE.
+[Exposed=Window, SecureContext, RuntimeEnabled=NativeGpu]
+interface NativeGPUResource {
+  readonly attribute GPUBuffer? buffer;
+  readonly attribute GPUTexture? texture;
+  // Opaque document identifier, never a native address or OS handle.
+  readonly attribute unsigned long id;
+  undefined destroy();
+};

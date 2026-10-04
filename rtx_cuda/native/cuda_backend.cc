@@ -9,6 +9,8 @@
 #include <cmath>
 #include <unordered_map>
 
+#include "cuda_interop.h"
+
 namespace rtx_cuda {
 namespace {
 void Check(CUresult result) {
@@ -69,12 +71,14 @@ struct CudaBackend::Impl {
   std::unordered_map<uint32_t, std::unique_ptr<Kernel>> kernels;
   uint32_t next_id = 0;
   size_t allocated = 0;
+  std::unique_ptr<CudaInterop> interop;
   ~Impl() {
     if (context) {
       cuCtxSetCurrent(context);
     }
     kernels.clear();
     buffers.clear();
+    interop.reset();
     if (context) {
       cuCtxDestroy(context);
     }
@@ -126,6 +130,25 @@ Json CudaBackend::Probe() {
 
 Json CudaBackend::Handle(const std::string& operation, const Json& request) {
   impl_->Init();
+  const bool shared_dispatch = operation == "interop.dispatch";
+  if (operation.starts_with("interop.")) {
+    if (!impl_->interop) {
+      impl_->interop = std::make_unique<CudaInterop>(impl_->device);
+    }
+    if (operation == "interop.probe") {
+      return impl_->interop->Probe(request);
+    }
+    if (operation == "interop.create") {
+      return impl_->interop->Create(++impl_->next_id, request);
+    }
+    if (operation == "interop.destroy") {
+      impl_->interop->Destroy(UInt(request.at("id"), 1, INT32_MAX));
+      return Json::object();
+    }
+    if (shared_dispatch) {
+      impl_->interop->Begin(request);
+    }
+  }
   auto buffer = [&](const Json& id) -> Allocation& {
     auto found = impl_->buffers.find(UInt(id, 1, INT32_MAX));
     Require(found != impl_->buffers.end(), "Unknown or destroyed CUDA buffer");
@@ -235,7 +258,7 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
     impl_->kernels.emplace(id, std::move(kernel));
     return {{"id", id}, {"entry", entry}, {"backend", "cuda-driver-nvrtc"}};
   }
-  if (operation == "cuda.dispatch") {
+  if (operation == "cuda.dispatch" || shared_dispatch) {
     const auto& jobs = request.at("jobs");
     Require(jobs.is_array() && !jobs.empty() && jobs.size() <= 256,
             "Expected 1..256 dispatches");
@@ -287,8 +310,18 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
         if (arg.contains("buffer")) {
           Require(expected_size == sizeof(CUdeviceptr),
                   "Kernel pointer ABI mismatch");
-          const auto address = buffer(arg.at("buffer")).value;
+          const auto address =
+              shared_dispatch
+                  ? impl_->interop->Buffer(UInt(arg.at("buffer"), 1, INT32_MAX))
+                  : buffer(arg.at("buffer")).value;
           std::memcpy(bytes.data(), &address, sizeof(address));
+        } else if (arg.contains("surface")) {
+          Require(shared_dispatch && expected_size == sizeof(CUsurfObject),
+                  "A CUDA surface requires a shared dispatch and 64-bit "
+                  "surface ABI");
+          const auto surface =
+              impl_->interop->Surface(UInt(arg.at("surface"), 1, INT32_MAX));
+          std::memcpy(bytes.data(), &surface, sizeof(surface));
         } else {
           Require(expected_size == 4,
                   "Only 32-bit scalar parameters are currently supported");
@@ -334,8 +367,12 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
       }
       Check(cuLaunchKernel(launch.function, launch.grid[0], launch.grid[1],
                            launch.grid[2], launch.block[0], launch.block[1],
-                           launch.block[2], launch.shared, nullptr,
+                           launch.block[2], launch.shared,
+                           shared_dispatch ? impl_->interop->stream() : nullptr,
                            arguments.data(), nullptr));
+    }
+    if (shared_dispatch) {
+      return impl_->interop->End();
     }
     Check(cuCtxSynchronize());
     return {{"dispatches", launches.size()}, {"gpuCompleted", true}};

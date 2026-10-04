@@ -22,7 +22,26 @@ struct NativeGpuFrameDescriptor {
   string quality;
   bool depth_inverted;
 };
-enum NativeGpuTextureAction { kCreate, kRelease, kAcquire, kDestroy };
+// Resources are created explicitly for sharing. Existing arbitrary WebGPU
+// objects and canvas swap-chain textures cannot be imported.
+struct NativeGpuResourceDescriptor {
+  SyncToken ready;
+  uint32 device_id;
+  uint32 device_generation;
+  uint32 id;
+  uint32 generation;
+  bool texture;
+  uint64 size;
+  uint32 usage;
+  uint32 width;
+  uint32 height;
+  string format;
+};
+enum NativeGpuTextureAction {
+  kCreate, kRelease, kAcquire, kDestroy,
+  kProbeInterop, kCreateResource, kReleaseResources, kAcquireResources,
+  kDestroyResource
+};
 struct NativeGpuTextureCommand {
   NativeGpuTextureAction action;
   mojo_base.mojom.UnguessableToken frame;
@@ -31,10 +50,15 @@ struct NativeGpuTextureCommand {
   array<handle<platform>> handles;
   uint32 adapter_luid_low;
   int32 adapter_luid_high;
+  NativeGpuResourceDescriptor? resource;
+  array<mojo_base.mojom.UnguessableToken> resources;
+  uint64 fence_value;
 };
 struct NativeGpuTextureResult {
   bool success;
   string error;
   array<handle<platform>> fences;
   array<uint64> fence_values;
+  uint32 adapter_luid_low;
+  int32 adapter_luid_high;
 };

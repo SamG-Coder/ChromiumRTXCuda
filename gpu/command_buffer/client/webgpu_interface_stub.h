@@ -25,6 +25,7 @@ class WebGPUInterfaceStub : public WebGPUInterface {
 
   // WebGPUInterface implementation
   scoped_refptr<APIChannel> GetAPIChannel() const override;
+  std::pair<uint32_t, uint32_t> GetDeviceWireHandle(WGPUDevice device) override;
   void FlushCommands() override;
   bool EnsureAwaitingFlush() override;
   void FlushAwaitingCommands() override;

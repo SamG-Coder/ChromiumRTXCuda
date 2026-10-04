@@ -7,6 +7,8 @@ blink_modules_sources("native_gpu") {
     "native_gpu.h",
     "native_gpu_frame.cc",
     "native_gpu_frame.h",
+    "native_gpu_resource.cc",
+    "native_gpu_resource.h",
   ]
   public_deps = [ "//third_party/blink/renderer/modules/webgpu" ]
 }

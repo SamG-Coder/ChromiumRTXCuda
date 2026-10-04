@@ -52,6 +52,7 @@ class DawnWireServices : public APIChannel {
   void HandleCommands(uint64_t trace_id,
                       base::span<const volatile uint8_t> commands);
   void ProcessEvents();
+  std::pair<uint32_t, uint32_t> GetDeviceWireHandle(WGPUDevice device);
   dawn::wire::ReservedBuffer ReserveBuffer(WGPUDevice device,
                                            const WGPUBufferDescriptor* desc);
   dawn::wire::ReservedTexture ReserveTexture(WGPUDevice device,
@@ -150,6 +151,7 @@ class WEBGPU_EXPORT WebGPUImplementation final : public WebGPUInterface,
   bool EnsureAwaitingFlush() override;
   void FlushAwaitingCommands() override;
   scoped_refptr<APIChannel> GetAPIChannel() const override;
+  std::pair<uint32_t, uint32_t> GetDeviceWireHandle(WGPUDevice device) override;
   ReservedBuffer ReserveBuffer(
       WGPUDevice device,
       const WGPUBufferDescriptor* optionalDesc) override;

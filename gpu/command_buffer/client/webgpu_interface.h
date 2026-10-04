@@ -83,6 +83,9 @@ class WebGPUInterface : public InterfaceBase {
       WGPUDevice device,
       const WGPUTextureDescriptor* optionalDesc = nullptr) = 0;
 
+  virtual std::pair<uint32_t, uint32_t> GetDeviceWireHandle(
+      WGPUDevice device) = 0;
+
   // Gets or creates a usable WGPUDevice synchronously. It really should not
   // be used, and the async request adapter and request device APIs should be
   // used instead.

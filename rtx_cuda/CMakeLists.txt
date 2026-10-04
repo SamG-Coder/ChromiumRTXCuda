@@ -25,7 +25,7 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/raytrace.h"
     -Fh "${CMAKE_CURRENT_BINARY_DIR}/generated/raytrace.h" -Vn kRaytrace
     "${CMAKE_CURRENT_SOURCE_DIR}/native/raytrace.hlsl"
   DEPENDS native/raytrace.hlsl VERBATIM)
-add_executable(rtx_cuda_host native/main.cc native/cuda_backend.cc native/rtx_backend.cc
+add_executable(rtx_cuda_host native/main.cc native/cuda_backend.cc native/cuda_interop.cc native/rtx_backend.cc
   "${CMAKE_CURRENT_BINARY_DIR}/generated/raytrace.h")
 target_include_directories(rtx_cuda_host PRIVATE native third_party/json
   "${CMAKE_CURRENT_BINARY_DIR}/generated")

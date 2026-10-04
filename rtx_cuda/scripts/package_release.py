@@ -58,6 +58,18 @@ def main():
         parser.error("The actual Chromium browser integration tests must pass first")
 
     build = args.build_dir.resolve()
+    interop_report = json.loads((PROJECT / "test-results/cuda-interop/report.json").read_text(encoding="utf-8"))
+    required_interop_binaries = {"chrome.exe", "chrome.dll", "blink_modules.dll",
+                                "gpu_command_buffer_service.dll", "gpu_webgpu.dll",
+                                "gpu_common_interfaces_shared.dll", "rtx_cuda/rtx_cuda_host.exe"}
+    if (not interop_report.get("passed") or
+            not required_interop_binaries.issubset(interop_report.get("binaries", {}))):
+        parser.error("The actual CUDA / WebGPU / ClearWater interop tests must pass first")
+    for file in required_interop_binaries:
+        if interop_report["binaries"][file] != sha256(build / file):
+            parser.error(f"Interop validation is stale for {file}; retest the current binaries")
+    if sha256(args.native_dir / "rtx_cuda_host.exe") != interop_report["binaries"]["rtx_cuda/rtx_cuda_host.exe"]:
+        parser.error("The packaged CUDA helper differs from the tested helper")
     startup_report_path = PROJECT / "test-results/portable-startup.json"
     startup_report = (json.loads(startup_report_path.read_text(encoding="utf-8"))
                       if startup_report_path.is_file() else {})
@@ -149,7 +161,9 @@ The test reports describe the GPU, driver and CUDA version actually tested.
 See API-README.md for the website JavaScript APIs and supported texture formats.
 
 Implemented: native CUDA, DXR ray queries, public DLSS Super Resolution / DLAA,
-and WebGPU color/depth/motion GPU texture interop. DLSS 5 is excluded.
+WebGPU color/depth/motion GPU texture interop, and native CUDA / WebGPU shared
+buffers and textures with GPU-side fences. ClearWater uses CUDA bloom and tone
+mapping while preserving its WebGPU device and canvas. DLSS 5 is excluded.
 Frame Generation and Ray Reconstruction are not implemented.
 
 This is for trusted development sites. Native GPU permission is enforced by
@@ -168,6 +182,7 @@ Chromium third-party notices are also available at chrome://credits.
 Source: https://github.com/SamG-Coder/ChromiumRTXCuda
 """)
     report_names = ["native.json", "dawn-interop.json", "browser.json"]
+    text_file("validation/cuda-webgpu-interop.json", json.dumps(interop_report, indent=2) + "\n")
     if (PROJECT / "test-results/prompt.json").is_file():
         report_names.append("prompt.json")
     for report_name in report_names:

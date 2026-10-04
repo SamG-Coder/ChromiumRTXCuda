@@ -2,6 +2,7 @@
 #ifndef CHROME_BROWSER_NATIVE_GPU_NATIVE_GPU_SERVICE_H_
 #define CHROME_BROWSER_NATIVE_GPU_NATIVE_GPU_SERVICE_H_
 #include <deque>
+#include <map>
 
 #include "base/memory/weak_ptr.h"
 #include "base/threading/sequence_bound.h"
@@ -40,6 +41,15 @@ class NativeGpuService final
                         const std::string&,
                         ProcessDLSSFrameCallback) override;
   void DestroyDLSSFrame(uint32_t) override;
+  void QueryInterop(gpu::mojom::NativeGpuResourceDescriptorPtr,
+                    QueryInteropCallback) override;
+  void CreateSharedResource(gpu::mojom::NativeGpuResourceDescriptorPtr,
+                            CreateSharedResourceCallback) override;
+  void DispatchShared(const std::vector<uint32_t>&,
+                      const gpu::SyncToken&,
+                      const std::string&,
+                      DispatchSharedCallback) override;
+  void DestroySharedResource(uint32_t) override;
   void OnVisibilityChanged(content::Visibility) override;
   void RenderFrameHostStateChanged(
       content::RenderFrameHost*,
@@ -79,6 +89,16 @@ class NativeGpuService final
   gpu::mojom::NativeGpuTextureCommandPtr FrameCommand(
       gpu::mojom::NativeGpuTextureAction);
   void StopProcess();
+  bool ValidInteropDevice(const gpu::SyncToken&) const;
+  void ReleaseInteropReply(gpu::mojom::NativeGpuTextureCommandPtr,
+                           std::string,
+                           DispatchSharedCallback,
+                           gpu::mojom::NativeGpuTextureResultPtr);
+  void DispatchInteropReply(gpu::mojom::NativeGpuTextureCommandPtr,
+                            DispatchSharedCallback,
+                            bool,
+                            std::string,
+                            std::vector<mojo::PlatformHandle>);
   void InitProcess();
   void Pump();
   void PermissionChanged(content::PermissionResult);
@@ -98,6 +118,15 @@ class NativeGpuService final
   base::OneShotTimer timeout_;
   bool busy_ = false;
   bool stopped_ = false;
+  struct SharedResource {
+    base::UnguessableToken token;
+    gpu::SyncToken ready;
+    uint32_t device_id, device_generation, native_id;
+    bool texture;
+  };
+  std::map<uint32_t, SharedResource> shared_resources_;
+  uint32_t next_shared_id_ = 0;
+  bool interop_busy_ = false;
   bool frame_busy_ = false;
   uint32_t frame_id_ = 0;
   uint32_t next_frame_id_ = 0;

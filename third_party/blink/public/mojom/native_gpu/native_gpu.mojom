@@ -17,5 +17,12 @@ interface NativeGpuService {
   ProcessDLSSFrame(uint32 frame_id, gpu.mojom.SyncToken ready, string options)
       => (bool success, string error);
   DestroyDLSSFrame(uint32 frame_id);
+  QueryInterop(gpu.mojom.NativeGpuResourceDescriptor device)
+      => (bool success, string capabilities);
+  CreateSharedResource(gpu.mojom.NativeGpuResourceDescriptor descriptor)
+      => (uint32 resource_id, string error);
+  DispatchShared(array<uint32> resources, gpu.mojom.SyncToken ready,
+                 string jobs) => (bool success, string result);
+  DestroySharedResource(uint32 resource_id);
   Close();
 };

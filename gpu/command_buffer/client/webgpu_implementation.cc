@@ -99,6 +99,13 @@ void DawnWireServices::ProcessEvents() {
   wgpuDawnWireClientInstanceProcessEvents(wgpu_instance_);
 }
 
+std::pair<uint32_t, uint32_t> DawnWireServices::GetDeviceWireHandle(
+    WGPUDevice device) {
+  base::AutoLockMaybe lock(OptionalToPtr(lock_));
+  auto handle = wire_client_.GetWireHandle(device);
+  return {handle.id, handle.generation};
+}
+
 dawn::wire::ReservedBuffer DawnWireServices::ReserveBuffer(
     WGPUDevice device,
     const WGPUBufferDescriptor* desc) {
@@ -411,6 +418,15 @@ ReservedBuffer WebGPUImplementation::ReserveBuffer(
   result.deviceId = reserved.deviceHandle.id;
   result.deviceGeneration = reserved.deviceHandle.generation;
   return result;
+#else
+  return {};
+#endif
+}
+
+std::pair<uint32_t, uint32_t> WebGPUImplementation::GetDeviceWireHandle(
+    WGPUDevice device) {
+#if BUILDFLAG(USE_DAWN)
+  return dawn_wire_->GetDeviceWireHandle(device);
 #else
   return {};
 #endif

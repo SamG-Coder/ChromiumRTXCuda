@@ -155,6 +155,10 @@ class WebGPUDecoderImpl final : public WebGPUDecoder {
   ContextResult Initialize(const GpuFeatureInfo& gpu_feature_info) override;
   mojom::NativeGpuTextureResultPtr NativeTextureCommand(
       mojom::NativeGpuTextureCommandPtr command) override;
+#if BUILDFLAG(IS_WIN)
+  mojom::NativeGpuTextureResultPtr NativeResourceCommand(
+      const mojom::NativeGpuTextureCommand& command);
+#endif
 
   // DecoderContext implementation.
   base::WeakPtr<DecoderContext> AsWeakPtr() override {
@@ -1044,6 +1048,44 @@ class WebGPUDecoderImpl final : public WebGPUDecoder {
     }
   };
   std::map<base::UnguessableToken, std::unique_ptr<NativeFrame>> native_frames_;
+  struct NativeResource {
+    wgpu::Device device;
+    wgpu::SharedBufferMemory buffer_memory;
+    wgpu::SharedTextureMemory texture_memory;
+    wgpu::Buffer buffer;
+    wgpu::Texture texture;
+    wgpu::SharedFence cuda_fence;
+    Microsoft::WRL::ComPtr<ID3D12Fence> completion_fence;
+    bool active = false;
+    void Abort() {
+      // A revoked/crashed CUDA process can no longer signal its queued fence.
+      // Invalidate the device, then unblock its queue so loss/disposal cannot
+      // strand a GPU-side wait indefinitely. This fence belongs to the dying
+      // document session; normal resource disposal never signals it from CPU.
+      device.Destroy();
+      if (completion_fence) {
+        completion_fence->Signal(UINT64_MAX);
+      }
+    }
+    ~NativeResource() {
+      if (buffer) {
+        if (active) {
+          wgpu::SharedBufferMemoryEndAccessState end;
+          buffer_memory.EndAccess(buffer, &end);
+        }
+        buffer.Destroy();
+      }
+      if (texture) {
+        if (active) {
+          wgpu::SharedTextureMemoryEndAccessState end;
+          texture_memory.EndAccess(texture, &end);
+        }
+        texture.Destroy();
+      }
+    }
+  };
+  std::map<base::UnguessableToken, std::unique_ptr<NativeResource>>
+      native_resources_;
 #endif
   bool destroyed_ = false;
 
@@ -1226,6 +1268,9 @@ mojom::NativeGpuTextureResultPtr WebGPUDecoderImpl::NativeTextureCommand(
   }
   auto parent = ScopedParentDecoder(this);
   using Action = mojom::NativeGpuTextureAction;
+  if (command->action >= Action::kProbeInterop) {
+    return NativeResourceCommand(*command);
+  }
   if (command->action == Action::kDestroy) {
     native_frames_.erase(command->frame);
     result->success = true;
@@ -1377,6 +1422,252 @@ mojom::NativeGpuTextureResultPtr WebGPUDecoderImpl::NativeTextureCommand(
   return result;
 }
 
+#if BUILDFLAG(IS_WIN)
+mojom::NativeGpuTextureResultPtr WebGPUDecoderImpl::NativeResourceCommand(
+    const mojom::NativeGpuTextureCommand& command) {
+  using Action = mojom::NativeGpuTextureAction;
+  auto result = mojom::NativeGpuTextureResult::New();
+  result->error =
+      "CUDA sharing requires a live D3D12 WebGPU device and valid resources.";
+  if (command.action == Action::kDestroyResource) {
+    auto it = native_resources_.find(command.frame);
+    if (command.fence_value == UINT64_MAX && it != native_resources_.end()) {
+      it->second->Abort();
+    }
+    native_resources_.erase(command.frame);
+  } else if (command.action == Action::kCreateResource ||
+             command.action == Action::kProbeInterop) {
+    const auto& desc = command.resource;
+    if (!desc) {
+      return result;
+    }
+    wgpu::Device device =
+        wire_server_->GetDevice(desc->device_id, desc->device_generation);
+    auto metadata = known_device_metadata_.find(device);
+    if (!device || metadata == known_device_metadata_.end() ||
+        metadata->second.backendType != wgpu::BackendType::D3D12 ||
+        !device.HasFeature(
+            wgpu::FeatureName::SharedBufferMemoryD3D12Resource) ||
+        !device.HasFeature(
+            wgpu::FeatureName::SharedTextureMemoryDXGISharedHandle) ||
+        !device.HasFeature(wgpu::FeatureName::SharedFenceDXGISharedHandle)) {
+      return result;
+    }
+    auto d3d = dawn::native::d3d12::GetD3D12Device(device.Get());
+    auto luid = d3d->GetAdapterLuid();
+    result->adapter_luid_low = luid.LowPart;
+    result->adapter_luid_high = luid.HighPart;
+    if (command.action == Action::kCreateResource) {
+      if (command.handles.size() != 2 || native_resources_.size() >= 256 ||
+          native_resources_.contains(command.frame) ||
+          luid.LowPart != command.adapter_luid_low ||
+          luid.HighPart != command.adapter_luid_high) {
+        result->error =
+            "CUDA and WebGPU must use the same physical GPU; resource limit is "
+            "256.";
+        return result;
+      }
+      auto resource = std::make_unique<NativeResource>();
+      resource->device = device;
+      if (FAILED(d3d->OpenSharedHandle(
+              command.handles[1].GetHandle().get(),
+              IID_PPV_ARGS(&resource->completion_fence)))) {
+        return result;
+      }
+      wgpu::SharedFenceDXGISharedHandleDescriptor fence_handle;
+      fence_handle.handle = command.handles[1].GetHandle().get();
+      wgpu::SharedFenceDescriptor fence_desc;
+      fence_desc.nextInChain = &fence_handle;
+      resource->cuda_fence = device.ImportSharedFence(&fence_desc);
+      if (desc->texture) {
+        wgpu::TextureFormat format = wgpu::TextureFormat::Undefined;
+        if (desc->format == "rgba8unorm") {
+          format = wgpu::TextureFormat::RGBA8Unorm;
+        }
+        if (desc->format == "rgba16float") {
+          format = wgpu::TextureFormat::RGBA16Float;
+        }
+        if (desc->format == "rgba32float") {
+          format = wgpu::TextureFormat::RGBA32Float;
+        }
+        if (desc->format == "r32float") {
+          format = wgpu::TextureFormat::R32Float;
+        }
+        if (format == wgpu::TextureFormat::Undefined || !desc->width ||
+            !desc->height || desc->width > 8192 || desc->height > 8192 ||
+            !desc->usage || (desc->usage & ~31U)) {
+          return result;
+        }
+        wgpu::SharedTextureMemoryDXGISharedHandleDescriptor handle;
+        handle.handle = command.handles[0].GetHandle().get();
+        wgpu::SharedTextureMemoryDescriptor memory;
+        memory.nextInChain = &handle;
+        resource->texture_memory = device.ImportSharedTextureMemory(&memory);
+        wgpu::SharedTextureMemoryProperties properties;
+        if (resource->texture_memory.GetProperties(&properties) !=
+                wgpu::Status::Success ||
+            properties.format != format ||
+            properties.size.width != desc->width ||
+            properties.size.height != desc->height ||
+            properties.size.depthOrArrayLayers != 1) {
+          return result;
+        }
+        wgpu::TextureDescriptor texture;
+        texture.size = {desc->width, desc->height, 1};
+        texture.format = format;
+        texture.usage = static_cast<wgpu::TextureUsage>(desc->usage);
+        resource->texture = resource->texture_memory.CreateTexture(&texture);
+        wgpu::SharedTextureMemoryBeginAccessDescriptor begin;
+        begin.initialized =
+            true;  // Native creation zeros the complete allocation on the GPU.
+        if (resource->texture_memory.BeginAccess(resource->texture, &begin) !=
+            wgpu::Status::Success) {
+          return result;
+        }
+        resource->active = true;
+        if (!wire_server_->InjectTexture(
+                resource->texture.Get(), {desc->id, desc->generation},
+                {desc->device_id, desc->device_generation})) {
+          return result;
+        }
+      } else {
+        if (desc->size < 4 || desc->size > 256ULL * 1024 * 1024 ||
+            desc->size % 4 || !desc->usage || (desc->usage & ~444U)) {
+          return result;
+        }
+        dawn::native::d3d12::SharedBufferMemoryD3D12ResourceDescriptor handle;
+        if (FAILED(d3d->OpenSharedHandle(command.handles[0].GetHandle().get(),
+                                         IID_PPV_ARGS(&handle.resource)))) {
+          return result;
+        }
+        wgpu::SharedBufferMemoryDescriptor memory;
+        memory.nextInChain = &handle;
+        resource->buffer_memory = device.ImportSharedBufferMemory(&memory);
+        wgpu::SharedBufferMemoryProperties properties;
+        if (resource->buffer_memory.GetProperties(&properties) !=
+                wgpu::Status::Success ||
+            properties.size < desc->size) {
+          return result;
+        }
+        wgpu::BufferDescriptor buffer;
+        buffer.size = desc->size;
+        buffer.usage = static_cast<wgpu::BufferUsage>(desc->usage);
+        resource->buffer = resource->buffer_memory.CreateBuffer(&buffer);
+        wgpu::SharedBufferMemoryBeginAccessDescriptor begin;
+        begin.initialized = true;
+        if (resource->buffer_memory.BeginAccess(resource->buffer, &begin) !=
+            wgpu::Status::Success) {
+          return result;
+        }
+        resource->active = true;
+        if (!wire_server_->InjectBuffer(
+                resource->buffer.Get(), {desc->id, desc->generation},
+                {desc->device_id, desc->device_generation})) {
+          return result;
+        }
+      }
+      native_resources_.emplace(command.frame, std::move(resource));
+    }
+  } else {
+    if (command.resources.empty() || command.resources.size() > 256) {
+      return result;
+    }
+    wgpu::Device device;
+    for (const auto& token : command.resources) {
+      auto it = native_resources_.find(token);
+      if (it == native_resources_.end() ||
+          (device && device.Get() != it->second->device.Get())) {
+        return result;
+      }
+      auto& resource = *it->second;
+      device = resource.device;
+      if (command.action == Action::kReleaseResources) {
+        if (!resource.active) {
+          return result;
+        }
+        auto export_fences = [&](auto& end) {
+          if (!end.initialized || end.fenceCount != end.signaledValueCount ||
+              end.fenceCount > 4) {
+            return false;
+          }
+          auto fences = UNSAFE_BUFFERS(base::span(end.fences, end.fenceCount));
+          auto values = UNSAFE_BUFFERS(
+              base::span(end.signaledValues, end.signaledValueCount));
+          for (size_t i = 0; i < fences.size(); ++i) {
+            wgpu::SharedFenceDXGISharedHandleExportInfo shared;
+            wgpu::SharedFenceExportInfo info;
+            info.nextInChain = &shared;
+            fences[i].ExportInfo(&info);
+            HANDLE duplicate = nullptr;
+            if (info.type != wgpu::SharedFenceType::DXGISharedHandle ||
+                !DuplicateHandle(GetCurrentProcess(), shared.handle,
+                                 GetCurrentProcess(), &duplicate, 0, FALSE,
+                                 DUPLICATE_SAME_ACCESS)) {
+              return false;
+            }
+            result->fences.emplace_back(base::win::ScopedHandle(duplicate));
+            result->fence_values.push_back(values[i]);
+          }
+          return true;
+        };
+        if (resource.buffer) {
+          wgpu::SharedBufferMemoryEndAccessState end;
+          const auto status =
+              resource.buffer_memory.EndAccess(resource.buffer, &end);
+          resource.active = false;
+          if (status != wgpu::Status::Success || !export_fences(end)) {
+            return result;
+          }
+        } else {
+          wgpu::SharedTextureMemoryEndAccessState end;
+          const auto status =
+              resource.texture_memory.EndAccess(resource.texture, &end);
+          resource.active = false;
+          if (status != wgpu::Status::Success || !export_fences(end)) {
+            return result;
+          }
+        }
+      } else if (command.action == Action::kAcquireResources) {
+        if (resource.active || !command.fence_value) {
+          return result;
+        }
+        // CUDA signals this value on its stream. Dawn queues a GPU wait; no
+        // CPU fence wait or pixel readback is involved in the handoff.
+        if (resource.buffer) {
+          wgpu::SharedBufferMemoryBeginAccessDescriptor begin;
+          begin.initialized = true;
+          begin.fenceCount = 1;
+          begin.fences = &resource.cuda_fence;
+          begin.signaledValueCount = 1;
+          begin.signaledValues = &command.fence_value;
+          if (resource.buffer_memory.BeginAccess(resource.buffer, &begin) !=
+              wgpu::Status::Success) {
+            return result;
+          }
+        } else {
+          wgpu::SharedTextureMemoryBeginAccessDescriptor begin;
+          begin.initialized = true;
+          begin.fenceCount = 1;
+          begin.fences = &resource.cuda_fence;
+          begin.signaledValueCount = 1;
+          begin.signaledValues = &command.fence_value;
+          if (resource.texture_memory.BeginAccess(resource.texture, &begin) !=
+              wgpu::Status::Success) {
+            return result;
+          }
+        }
+        resource.active = true;
+      } else {
+        return result;
+      }
+    }
+  }
+  result->success = true;
+  result->error.clear();
+  return result;
+}
+#endif
+
 WebGPUDecoderImpl::~WebGPUDecoderImpl() {
   Destroy(false);
 }
@@ -1396,6 +1687,10 @@ void WebGPUDecoderImpl::Destroy(bool have_context) {
   associated_shared_buffer_map_.clear();
 #if BUILDFLAG(IS_WIN)
   native_frames_.clear();
+  for (const auto& [token, resource] : native_resources_) {
+    resource->Abort();
+  }
+  native_resources_.clear();
 #endif
 
   // Destroy all known devices to ensure that any service-side objects holding

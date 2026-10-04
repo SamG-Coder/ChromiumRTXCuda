@@ -104,6 +104,133 @@ It preserves `createBuffer`, `kernel`, named `bind`, scalar updates,
 This module does not implement cuda-webshader's complete WebGPU runtime,
 transpiler, textures, bindless resources, or all of its higher-level APIs.
 
+### Native CUDA with real WebGPU resources
+
+Use the `GpuRuntime` from [cuda-webshader](https://github.com/SamG-Coder/cuda-webshader)
+for mixed WebGPU/CUDA applications. Its `nativeInterop` option retains a real
+WebGPU `GPUDevice`; `runtime.native` is available only with permission, matching
+physical adapters and supported resource requirements. The standalone native
+transport example above still uses its separate CUDA allocations.
+
+```js
+import {GpuRuntime, requestPermission} from './runtime/runtime.js';
+
+// From a user click, when permission is not already granted:
+await requestPermission();
+const runtime = await GpuRuntime.create({
+  nativeInterop: {requirements: {
+    sharedBuffers: true, gpuBufferToTexture: true,
+    resources: 4, maxResourceBytes: 1920 * 1080 * 16,
+    sharedBytes: 128 * 1024 * 1024, blocksPerLaunch: 32400,
+  }},
+});
+// Without the grant or required capabilities, runtime remains usable as WebGPU.
+if (runtime.native) {
+  const pixels = await runtime.createSharedBuffer(1920 * 1080 * 4);
+  // pixels.gpuBuffer is a real GPUBuffer, usable in normal WebGPU bind groups.
+  const kernel = await runtime.native.kernel(cudaSource, {
+    entry: 'render', workgroupSize: [8, 8, 1],
+  });
+  await runtime.native.batch()
+    .dispatch(kernel.bind({output: pixels}, {width:1920, height:1080}), [240,135])
+    .submit();
+  // Await submit before submitting WebGPU use of these resources. Resolution
+  // means the GPU wait was queued, not that the CPU waited for every pixel.
+  const encoder = runtime.device.createCommandEncoder();
+  encoder.copyBufferToTexture(
+    {buffer:pixels.gpuBuffer, bytesPerRow:1920*4, rowsPerImage:1080},
+    {texture:canvasContext.getCurrentTexture()}, [1920,1080]);
+  runtime.device.queue.submit([encoder.finish()]);
+  runtime.destroyBuffer(pixels);
+}
+```
+
+`createSharedBuffer()` allocates a D3D12 default-heap resource, imports it into
+Dawn as shared buffer memory, and maps the same allocation to a CUDA device
+pointer. Initial data, when supplied, uses WebGPU `queue.writeBuffer`.
+Arbitrary existing `GPUBuffer` objects cannot be imported into CUDA.
+
+For direct surface output, call
+`await runtime.createSharedTexture({width, height, format, usage})`. The result's
+`gpuTexture` is a real `GPUTexture` and its `view` is a normal `GPUTextureView`.
+Bind the resource to a CUDA `cudaSurfaceObject_t` parameter and use
+`surf2Dread<T>` / `surf2Dwrite<T>`; X coordinates are **byte offsets**, as in CUDA.
+Surface writes use the storage representation listed below; UNORM and half-float
+conversion is the kernel's responsibility.
+
+| WebGPU format | CUDA surface storage | Bytes per texel |
+| --- | --- | --- |
+| `rgba8unorm` | `uchar4` | 4 |
+| `rgba16float` | `ushort4` containing IEEE half bits | 8 |
+| `rgba32float` | `float4` | 16 |
+| `r32float` | `float` | 4 |
+
+- Textures are 2D, with one array layer, one mip level, and one sample. Each
+  dimension is 1–8192, further limited by the WebGPU device and byte budget.
+  Supported usage flags are `COPY_SRC`, `COPY_DST`, `TEXTURE_BINDING`,
+  `STORAGE_BINDING`, and `RENDER_ATTACHMENT` (mask 31). Normal WebGPU validation,
+  including filtering support, still applies.
+- Shared buffers have a four-byte-aligned size and support `COPY_SRC`,
+  `COPY_DST`, `STORAGE`, `VERTEX`, `INDEX`, and `INDIRECT` (mask 444). Mapping,
+  uniform-buffer use, and query resolution are excluded. Each resource is at
+  most 256 MiB; there are at most 256 resources and 2 GiB of shared allocations
+  per document, including D3D12 allocation padding. Hardware allocation can
+  still fail under memory pressure.
+- Existing arbitrary textures, depth formats, compressed formats, sRGB views,
+  texture arrays, 3D textures, multisampling, and canvas swap-chain import are
+  unsupported. Create an explicit shared texture, then sample/copy it on the
+  GPU. `arbitraryTextureImport` is always false.
+- If direct texture sharing does not meet the application's needs, use a
+  shared buffer and `copyBufferToTexture` or a WebGPU conversion pass. Rows in
+  buffer-to-texture copies must meet WebGPU's 256-byte alignment. This is
+  **shared-buffer GPU copy**, not direct texture sharing. There is no automatic
+  CPU readback, base64 pixel transport, or CPU pixel re-upload.
+
+The browser API underneath the library is:
+`getInteropCapabilities(device)`, `createSharedBuffer(device, size, usage)`,
+`createSharedTexture(device, width, height, format, usage)`,
+`dispatchShared(resources, jobs)`, and `NativeGPUResource.destroy()`.
+Capability/job payloads use the browser's JSON transport; the library parses
+them and supplies the opaque session/resource IDs. Resource wrappers expose
+`.buffer` or `.texture` and an opaque document ID. OS handles, native pointers,
+LUIDs and surface addresses never enter the renderer or website.
+
+The capability result reports formats, usages, dimensions, byte/count/dispatch
+limits, `samePhysicalGpu`, `gpuBufferToTexture`, and
+`synchronization: 'd3d12-fence-cuda-external-semaphore'`. Detection is tied to
+the actual supplied WebGPU device. The initial implementation uses CUDA device
+0 and rejects a WebGPU device on a different physical adapter. Native CUDA
+availability alone is insufficient to select this path.
+
+At every submission the browser flushes the WebGPU wire commands, Dawn ends
+access and exports D3D12 completion fences, and CUDA waits on those fences with
+`cuWaitExternalSemaphoresAsync`. CUDA kernels and an external semaphore signal
+run on the same CUDA stream. Dawn begins access with that signal as its GPU
+wait. Applications must await the shared submission before using its resources
+again in WebGPU, and must submit prior WebGPU work before starting CUDA use.
+The frame handoff does not call a CPU fence wait. Allocation, explicit idle,
+and destruction may wait to release resources safely.
+
+Revocation, hiding/deactivating the document, closing the session, or a failed
+interop operation invalidates its shared resources. An abort invalidates the
+associated WebGPU device and releases orphaned GPU waits; recreate the device
+and scene after loss. Normal resource disposal keeps other shared resources
+usable. Device loss closes the library's native session.
+
+ClearWater uses its existing `.cu` `bloom_pass` and `present` kernels through
+this path. Its simulation, scene rendering, GPU textures and canvas remain on
+WebGPU. Five explicit shared buffers connect the postprocessing stages; the
+final packed RGBA buffer is copied to the canvas on the GPU. Its normal
+WebGPU backend is retained without permission, unsupported requirements, or
+with `?backend=webgpu`. The scene checks resource and launch requirements again
+at resize.
+
+Run `node rtx_cuda/tests/cuda-interop.browser.mjs` from the Chromium source
+checkout with `CLEARWATER_ROOT` and `WEBCUDA_ROOT` set if those repositories are
+not siblings. `WEBCUDA_ROOT` points to the library's `src` directory. The test
+uses the actual built browser and GPU; its separate diagnostic counters are
+not part of the frame pixel path.
+
 ### RTX and public DLSS
 
 Pass your existing WebGPU device to RTX, then supply your renderer's textures:
@@ -295,7 +422,7 @@ staging path, then repeat the packaging command without `--stage-only`:
 ```powershell
 gn desc out/RTXCuda //chrome:chrome runtime_deps > chrome-runtime-deps.txt
 python rtx_cuda/scripts/package_release.py `
-  --version 0.1.0-alpha.2 `
+  --version 0.1.0-alpha.3 `
   --runtime-deps chrome-runtime-deps.txt `
   --native-dir rtx_cuda/build-portable/Release `
   --ngx-runtime 'D:/SDKs/streamline/bin/x64' `

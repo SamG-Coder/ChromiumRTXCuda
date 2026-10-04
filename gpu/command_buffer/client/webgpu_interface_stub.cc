@@ -7,6 +7,11 @@
 namespace gpu {
 namespace webgpu {
 
+std::pair<uint32_t, uint32_t> WebGPUInterfaceStub::GetDeviceWireHandle(
+    WGPUDevice device) {
+  return {};
+}
+
 namespace {
 
 class APIChannelStub : public APIChannel {
