@@ -278,13 +278,14 @@ NativeGpuService::~NativeGpuService() {
 }
 bool NativeGpuService::Eligible() const {
   auto& frame = render_frame_host();
+  // Visibility is a prompt requirement, not a permission lifetime. Revoking
+  // access on occlusion or a tab switch also destroys live CUDA/WebGPU memory
+  // and can reject an ownership handoff that was already in flight.
   return frame.IsActive() && frame.IsInPrimaryMainFrame() &&
          !origin().opaque() &&
          network::IsOriginPotentiallyTrustworthy(origin()) &&
          frame.IsFeatureEnabled(
-             network::mojom::PermissionsPolicyFeature::kNativeGpu) &&
-         frame.GetVisibilityState() ==
-             blink::mojom::PageVisibilityState::kVisible;
+             network::mojom::PermissionsPolicyFeature::kNativeGpu);
 }
 blink::mojom::PermissionStatus NativeGpuService::Status() const {
   if (!Eligible()) {
@@ -322,13 +323,19 @@ void NativeGpuService::QueryPermission(QueryPermissionCallback callback) {
 void NativeGpuService::RequestPermission(RequestPermissionCallback callback) {
   if (!Eligible()) {
     std::move(callback).Run(blink::mojom::PermissionStatus::DENIED,
-                            "Native GPU requires a visible, secure top-level "
+                            "Native GPU requires an active, secure top-level "
                             "document permitted by Permissions Policy.");
     return;
   }
   auto status = Status();
   if (status != blink::mojom::PermissionStatus::ASK) {
     std::move(callback).Run(status, "");
+    return;
+  }
+  if (render_frame_host().GetVisibilityState() !=
+      blink::mojom::PageVisibilityState::kVisible) {
+    std::move(callback).Run(
+        status, "Request native GPU permission from a visible page.");
     return;
   }
   if (!render_frame_host().HasTransientUserActivation()) {
@@ -1057,11 +1064,6 @@ void NativeGpuService::PermissionChanged(content::PermissionResult result) {
 void NativeGpuService::Close() {
   StopProcess();
   ResetAndDeleteThis();
-}
-void NativeGpuService::OnVisibilityChanged(content::Visibility visibility) {
-  if (visibility != content::Visibility::VISIBLE) {
-    StopProcess();
-  }
 }
 void NativeGpuService::RenderFrameHostStateChanged(
     content::RenderFrameHost* frame,

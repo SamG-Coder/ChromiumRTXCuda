@@ -70,6 +70,12 @@ def main():
             parser.error(f"Interop validation is stale for {file}; retest the current binaries")
     if sha256(args.native_dir / "rtx_cuda_host.exe") != interop_report["binaries"]["rtx_cuda/rtx_cuda_host.exe"]:
         parser.error("The packaged CUDA helper differs from the tested helper")
+    visibility_report = json.loads((PROJECT / "test-results/visibility/report.json").read_text(encoding="utf-8"))
+    if not visibility_report.get("passed"):
+        parser.error("The real visibility and ClearWater resume tests must pass first")
+    for file in ("chrome.exe", "chrome.dll"):
+        if visibility_report.get("binaries", {}).get(file) != sha256(build / file):
+            parser.error(f"Visibility validation is stale for {file}; retest the current binaries")
     startup_report_path = PROJECT / "test-results/portable-startup.json"
     startup_report = (json.loads(startup_report_path.read_text(encoding="utf-8"))
                       if startup_report_path.is_file() else {})
@@ -183,6 +189,7 @@ Source: https://github.com/SamG-Coder/ChromiumRTXCuda
 """)
     report_names = ["native.json", "dawn-interop.json", "browser.json"]
     text_file("validation/cuda-webgpu-interop.json", json.dumps(interop_report, indent=2) + "\n")
+    text_file("validation/visibility.json", json.dumps(visibility_report, indent=2) + "\n")
     if (PROJECT / "test-results/prompt.json").is_file():
         report_names.append("prompt.json")
     for report_name in report_names:

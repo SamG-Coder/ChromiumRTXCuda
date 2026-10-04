@@ -66,7 +66,10 @@ Capability queries return hardware/backend availability without granting
 execution. `GpuRuntime.create()` requires an existing grant; it does not
 silently prompt. The browser checks permission for each operation, subscribes
 to permission changes, and terminates the GPU subprocess on revocation,
-document deactivation, tab hiding, explicit close, or timeout. Buffers are lost
+document deactivation, explicit close, or timeout. Switching tabs, window
+occlusion and minimising preserve the grant, native session and GPU resources.
+Visibility and user activation are required to display a new permission prompt;
+applications can pause rendering with the Page Visibility API. Buffers are lost
 when a session is terminated; recreate the runtime and resources afterward.
 No permission is synchronized to another device.
 
@@ -211,7 +214,7 @@ again in WebGPU, and must submit prior WebGPU work before starting CUDA use.
 The frame handoff does not call a CPU fence wait. Allocation, explicit idle,
 and destruction may wait to release resources safely.
 
-Revocation, hiding/deactivating the document, closing the session, or a failed
+Revocation, deactivating the document, closing the session, or a failed
 interop operation invalidates its shared resources. An abort invalidates the
 associated WebGPU device and releases orphaned GPU waits; recreate the device
 and scene after loss. Normal resource disposal keeps other shared resources
@@ -298,7 +301,7 @@ the CPU. DLSS is an extension of this fork, not a standard WebGPU feature.
 - One DLSS session per document, one `process()` in flight, dimensions up to
   8192 per axis, and 256 MiB combined shared texture storage. The same output
   GPUTexture is reused; submit any work consuming it before the next process.
-  Permission revocation, hiding the tab, or document destruction discards the
+  Permission revocation, document deactivation or destruction discards the
   session. Native handles and adapter identifiers never enter JavaScript.
 
 The separate native DXR sample API is useful for integration checks:
@@ -384,6 +387,7 @@ npm ci
 npm test
 npm run test:native
 npm run test:browser
+npm run test:visibility
 npm run demo
 ```
 
@@ -392,6 +396,14 @@ profile. The demo requests normal permission and has CUDA, DXR, DLAA, and
 DLSS SR controls. Browser integration tests use the built executable and a
 temporary profile, and save their report under ignored `test-results/`.
 They fail if the native API is absent; there is no mock GPU fallback.
+
+`test:visibility` checks actual tab switches and window minimise/restore,
+including shared buffers/surfaces, permission revocation while hidden, and
+ClearWater6.1 continuing to render with the same device and allocations. Set
+`CLEARWATER_GAME_ROOT` to a built ClearWater6.1 `dist` directory and
+`WEBCUDA_ROOT` to the WebCuda `src` directory when those checkouts are not
+siblings of this Chromium workspace. Playwright focus emulation is explicitly
+disabled so these tests exercise real browser visibility transitions.
 
 An additional GPU interoperability test uses the fork's already-built Dawn
 component DLLs. It imports native D3D12 textures, submits guides through Dawn,
@@ -422,7 +434,7 @@ staging path, then repeat the packaging command without `--stage-only`:
 ```powershell
 gn desc out/RTXCuda //chrome:chrome runtime_deps > chrome-runtime-deps.txt
 python rtx_cuda/scripts/package_release.py `
-  --version 0.1.0-alpha.3 `
+  --version 0.1.0-alpha.4 `
   --runtime-deps chrome-runtime-deps.txt `
   --native-dir rtx_cuda/build-portable/Release `
   --ngx-runtime 'D:/SDKs/streamline/bin/x64' `

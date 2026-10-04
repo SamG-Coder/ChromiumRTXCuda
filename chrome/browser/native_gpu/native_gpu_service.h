@@ -50,7 +50,6 @@ class NativeGpuService final
                       const std::string&,
                       DispatchSharedCallback) override;
   void DestroySharedResource(uint32_t) override;
-  void OnVisibilityChanged(content::Visibility) override;
   void RenderFrameHostStateChanged(
       content::RenderFrameHost*,
       content::RenderFrameHost::LifecycleState,

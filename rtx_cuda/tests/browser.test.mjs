@@ -132,11 +132,11 @@ try {
     await liveCuda.idle();
   });
   const other=await context.newPage();await other.goto('about:blank');await other.bringToFront();
-  await page.waitForFunction(async()=>document.visibilityState==='hidden' &&
-    await navigator.cuda.queryPermission()==='denied',null,{polling:100});
+  await page.waitForFunction(()=>document.visibilityState==='hidden',null,{polling:100});
+  assert.equal(await page.evaluate(()=>navigator.cuda.queryPermission()),'granted');
   await page.bringToFront();
-  assert.match(await page.evaluate(()=>window.liveCuda.read(window.liveBuffer).catch(e=>e.message)),/Unknown|invalid|closed|buffer/i);
-  check('hiding a tab destroys its GPU buffers');
+  assert.deepEqual(await page.evaluate(async()=>Array.from(await liveCuda.read(liveBuffer,Uint32Array))),[37]);
+  check('tab switching preserves the permission grant, CUDA session and existing buffer contents');
   await context.route('http://insecure.test/**',route=>route.fulfill({status:200,contentType:'text/html',body:'<!doctype html><title>Insecure origin test</title>'}));
   await other.goto('http://insecure.test/');
   assert.deepEqual(await other.evaluate(()=>({secure:isSecureContext,cuda:'cuda' in navigator,rtx:'rtx' in navigator})),
