@@ -178,6 +178,9 @@ Json CudaInterop::Probe(const Json& request) {
           {"maxSharedBytes", kSessionLimit},
           {"maxResources", 256},
           {"maxGridDimensions", impl_->max_grid_dimensions},
+          // Legacy clients require a safe-integer budget field. New clients use
+          // per-axis hardware limits; the host imposes no total-block budget.
+          {"maxBlocksPerLaunch", 9007199254740991ULL},
           {"reason",
            same ? "" : "CUDA and WebGPU selected different physical GPUs"}};
 }
