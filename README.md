@@ -11,16 +11,18 @@ See [the API, build instructions, demo, and current limitations](rtx_cuda/README
 This is an experimental native GPU integration for trusted development sites;
 the GPU helper is not yet a hardened browser sandbox.
 
-## Latest build: 0.1.0-alpha.5
+## Latest build: 0.1.0-alpha.6
 
-[Release notes](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/tag/v0.1.0-alpha.5) · [Download Windows x64 ZIP](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/download/v0.1.0-alpha.5/ChromiumRTXCuda-0.1.0-alpha.5-windows-x64.zip) · [SHA-256 checksum](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/download/v0.1.0-alpha.5/ChromiumRTXCuda-0.1.0-alpha.5-windows-x64.zip.sha256)
+[Release notes](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/tag/v0.1.0-alpha.6) Â· [Download Windows x64 ZIP](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/download/v0.1.0-alpha.6/ChromiumRTXCuda-0.1.0-alpha.6-windows-x64.zip) Â· [SHA-256 checksum](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/download/v0.1.0-alpha.6/ChromiumRTXCuda-0.1.0-alpha.6-windows-x64.zip.sha256)
 
 Extract the complete ZIP into a new folder and run **`chrome.exe`**.
 `Start ChromiumRTXCuda.cmd` is optional: it uses a separate `profile` folder
 beside the browser and skips first-run/default-browser prompts. Both entry
 points support native CUDA and RTX.
 
-This prerelease includes optimized native CUDA defaults with fast math and no
+This prerelease fixes newer-PTX rejection on older CUDA 13 drivers by compiling
+ordinary CUDA kernels directly to device-specific CUBIN machine code. It retains
+optimized native CUDA defaults with fast math and no
 debug information, hardware-based CUDA grid limits, direct native canvas
 presentation, and no wall-clock deadline for CUDA/OptiX shader compilation.
 

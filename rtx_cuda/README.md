@@ -1,15 +1,17 @@
 # ChromiumRTXCuda
 
-## Latest build: 0.1.0-alpha.5
+## Latest build: 0.1.0-alpha.6
 
-[Release notes](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/tag/v0.1.0-alpha.5) · [Download Windows x64 ZIP](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/download/v0.1.0-alpha.5/ChromiumRTXCuda-0.1.0-alpha.5-windows-x64.zip) · [SHA-256 checksum](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/download/v0.1.0-alpha.5/ChromiumRTXCuda-0.1.0-alpha.5-windows-x64.zip.sha256)
+[Release notes](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/tag/v0.1.0-alpha.6) Ã‚Â· [Download Windows x64 ZIP](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/download/v0.1.0-alpha.6/ChromiumRTXCuda-0.1.0-alpha.6-windows-x64.zip) Ã‚Â· [SHA-256 checksum](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/download/v0.1.0-alpha.6/ChromiumRTXCuda-0.1.0-alpha.6-windows-x64.zip.sha256)
 
 Extract the complete ZIP into a new folder and run **`chrome.exe`**.
 `Start ChromiumRTXCuda.cmd` is optional: it uses a separate `profile` folder
 beside the browser and skips first-run/default-browser prompts. Both entry
 points support native CUDA and RTX.
 
-This prerelease includes optimized native CUDA defaults with fast math and no
+This prerelease fixes newer-PTX rejection on older CUDA 13 drivers by compiling
+ordinary CUDA kernels directly to device-specific CUBIN machine code. It retains
+optimized native CUDA defaults with fast math and no
 debug information, hardware-based CUDA grid limits, direct native canvas
 presentation, and no wall-clock deadline for CUDA/OptiX shader compilation.
 
@@ -185,7 +187,7 @@ conversion is the kernel's responsibility.
 | `r32float` | `float` | 4 |
 
 - Textures are 2D, with one array layer, one mip level, and one sample. Each
-  dimension is 1â€“8192, further limited by the WebGPU device and byte budget.
+  dimension is 1ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“8192, further limited by the WebGPU device and byte budget.
   Supported usage flags are `COPY_SRC`, `COPY_DST`, `TEXTURE_BINDING`,
   `STORAGE_BINDING`, and `RENDER_ATTACHMENT` (mask 31). Normal WebGPU validation,
   including filtering support, still applies.
@@ -462,7 +464,7 @@ staging path, then repeat the packaging command without `--stage-only`:
 ```powershell
 gn desc out/RTXCuda //chrome:chrome runtime_deps > chrome-runtime-deps.txt
 python rtx_cuda/scripts/package_release.py `
-  --version 0.1.0-alpha.5 `
+  --version 0.1.0-alpha.6 `
   --runtime-deps chrome-runtime-deps.txt `
   --native-dir rtx_cuda/build-portable/Release `
   --ngx-runtime 'D:/SDKs/streamline/bin/x64' `
@@ -650,6 +652,24 @@ CUDA compute launches have no additional total-block cap. `maxGridDimensions` ex
 
 Native CUDA uses `--use_fast_math`, `--dopt=on`, `--Ofast-compile=0`, and
 `--extra-device-vectorization`, with the actual device compute architecture.
-Driver JIT optimization is explicitly level 4; debug and line information are
-disabled. Fast math changes floating-point accuracy and denormal handling.
+NVRTC targets the detected `sm_XX` architecture and returns CUBIN machine
+code, assembled with PTXAS optimization level 3. Debug and line information
+are disabled. Fast math changes floating-point accuracy and denormal handling.
 These are compute defaults; OptiX retains its own pipeline compiler settings.
+
+### Driver compatibility for native compute
+
+The bundled NVRTC 13.3 compiler targets the detected GPU and emits CUBIN rather
+than passing PTX to the installed driver. This avoids the unsupported PTX
+version error when a CUDA 13 driver predates the bundled compiler's minor
+version (for example the R595 / CUDA 13.2 driver branch). CUDA 13 still requires
+a driver from the supported R580-or-newer family and any features used must be
+supported by that driver. OptiX has a separate PTX pipeline and its own driver
+requirements; this change does not make an older OptiX driver compatible.
+
+The full showcase render source was cross-compiled for sm_86 and sm_120. Local
+execution was checked on an RTX 5080; physical RTX 3060 / R595 execution remains
+a user-device validation boundary.
+
+References: [CUDA compatibility](https://docs.nvidia.com/deploy/cuda-compatibility/minor-version-compatibility.html),
+[NVRTC CUBIN API](https://docs.nvidia.com/cuda/nvrtc/).

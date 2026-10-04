@@ -322,15 +322,15 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
     CheckNv(nvrtcCreateProgram(&program.value, source.c_str(), "browser.cu", 0,
                                nullptr, nullptr));
     CheckNv(nvrtcAddNameExpression(program.value, entry.c_str()));
-    const auto architecture = "--gpu-architecture=compute_" +
+    const auto architecture = "--gpu-architecture=sm_" +
                               std::to_string(impl_->major) +
                               std::to_string(impl_->minor);
     // Optimized native compute with fast math and no device debug information.
     const char* options[] = {architecture.c_str(), "--std=c++17",
                              "--no-source-include", "--use_fast_math",
                              "--dopt=on", "--Ofast-compile=0",
-                             "--extra-device-vectorization"};
-    if (nvrtcCompileProgram(program.value, 7, options) != NVRTC_SUCCESS) {
+                             "--extra-device-vectorization", "--ptxas-options=--opt-level=3"};
+    if (nvrtcCompileProgram(program.value, 8, options) != NVRTC_SUCCESS) {
       size_t n = 0;
       CheckNv(nvrtcGetProgramLogSize(program.value, &n));
       std::string log(n, '\0');
@@ -340,24 +340,37 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
       throw std::runtime_error("NVRTC: " + log.substr(0, 16384));
     }
     size_t n = 0;
-    CheckNv(nvrtcGetPTXSize(program.value, &n));
-    std::string ptx(n, '\0');
-    CheckNv(nvrtcGetPTX(program.value, ptx.data()));
+    // Compile machine code with the bundled toolchain. Passing newer PTX to
+    // an older installed driver unnecessarily breaks CUDA minor compatibility.
+    CheckNv(nvrtcGetCUBINSize(program.value, &n));
+    std::string cubin(n, '\0');
+    CheckNv(nvrtcGetCUBIN(program.value, cubin.data()));
     const char* lowered = nullptr;
     CheckNv(nvrtcGetLoweredName(program.value, entry.c_str(), &lowered));
     auto kernel = std::make_unique<Impl::Kernel>();
     kernel->entry = entry;
-    CUjit_option jit_options[] = {CU_JIT_OPTIMIZATION_LEVEL,
-                                  CU_JIT_GENERATE_DEBUG_INFO,
-                                  CU_JIT_GENERATE_LINE_INFO};
-    void* jit_values[] = {reinterpret_cast<void*>(uintptr_t{4}), nullptr, nullptr};
-    Check(cuModuleLoadDataEx(&kernel->module.value, ptx.c_str(), 3, jit_options,
-                             jit_values));
+    const auto loaded = cuModuleLoadDataEx(&kernel->module.value, cubin.data(),
+                                           0, nullptr, nullptr);
+    if (loaded != CUDA_SUCCESS) {
+      const char* message = nullptr;
+      cuGetErrorString(loaded, &message);
+      int driver = 0, nv_major = 0, nv_minor = 0;
+      cuDriverGetVersion(&driver);
+      nvrtcVersion(&nv_major, &nv_minor);
+      throw std::runtime_error(
+          std::string("Native CUDA machine-code load failed: ") +
+          (message ? message : "CUDA driver error") + " (target sm_" +
+          std::to_string(impl_->major) + std::to_string(impl_->minor) +
+          ", NVRTC " + std::to_string(nv_major) + "." +
+          std::to_string(nv_minor) + ", driver CUDA API " +
+          std::to_string(driver) + "). Update the NVIDIA driver if it does "
+          "not support this CUDA toolkit major version.");
+    }
     Check(
         cuModuleGetFunction(&kernel->function, kernel->module.value, lowered));
     const auto id = ++impl_->next_id;
     impl_->kernels.emplace(id, std::move(kernel));
-    return {{"id", id}, {"entry", entry}, {"backend", "cuda-driver-nvrtc"}};
+    return {{"id", id}, {"entry", entry}, {"backend", "cuda-driver-nvrtc"}, {"codeFormat", "cubin"}};
   }
   if (operation == "cuda.dispatch" || shared_dispatch) {
     const auto& jobs = request.at("jobs");

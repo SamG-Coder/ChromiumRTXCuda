@@ -7,6 +7,8 @@ try {
   const probe = await host.request('probe');
   assert.equal(probe.cuda.available,true); assert.equal(probe.rtx.inlineRayTracing,true);
   assert.equal(probe.cuda.adapterLuid,probe.rtx.adapterLuid);
+  const codeFormat=await host.request('cuda.kernel',{source:'__global__ void format_probe() {}',entry:'format_probe'});
+  assert.equal(codeFormat.codeFormat,'cubin','Native compute must load machine code, not driver-JIT PTX');
   const runtime = new GpuRuntime({execute: async (op,payload) => JSON.stringify(await host.request(op,JSON.parse(payload))),close(){}});
   await assert.rejects(runtime.kernel('__global__ void bad() { invalid syntax; }',{entry:'bad'}),/NVRTC/);
   const diagnostic = await runtime.kernel('__global__ void diagnostic() { printf("CUDA diagnostic"); }',{entry:'diagnostic'});
