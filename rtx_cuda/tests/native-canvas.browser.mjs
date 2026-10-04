@@ -38,7 +38,14 @@ try {
    if(!heldRejected){try{await navigator.cuda.dispatchShared([image.nativeResource],JSON.stringify({jobs:batch.jobs,$session:rt.native.session}));}catch(error){heldRejected=/Resources must/.test(error.message);}}
    maxSurfaces=Math.max(maxSurfaces,target.surfaces.length);await tick();
   };
+  await navigator.cuda.execute('cuda.profile',JSON.stringify({frames:4,$session:rt.native.session}));
   for(let frame=1;frame<=80;frame++)await render(frame);
+  const gpuProfile=JSON.parse(await navigator.cuda.execute('cuda.profile',JSON.stringify({$session:rt.native.session})));
+  if(gpuProfile.frames.length!==4||gpuProfile.frames.some(f=>f.truncated||!f.intervals.some(i=>i.phase==='paint')||f.intervals.some(i=>!Number.isFinite(i.gpuIntervalMs)||i.gpuIntervalMs<0)))throw Error('Invalid bounded native profile');
+  const emptyProfile=JSON.parse(await navigator.cuda.execute('cuda.profile',JSON.stringify({$session:rt.native.session})));
+  if(emptyProfile.frames.length)throw Error('Native profile was not drained');
+  let profileLimitRejected=false;try{await navigator.cuda.execute('cuda.profile',JSON.stringify({frames:33,$session:rt.native.session}));}catch{profileLimitRejected=true;}
+  if(!profileLimitRejected)throw Error('Native profile budget was not enforced');
   await tick();await tick();
   const capture=()=>{const copy=document.createElement('canvas');copy.width=canvas.width;copy.height=canvas.height;const ctx=copy.getContext('2d');ctx.drawImage(canvas,0,0);return [...ctx.getImageData(16,24,1,1).data];};
   const pixel=capture();await window.canvasCheckpoint();
@@ -65,7 +72,7 @@ try {
   const disposed=target.surfaces.every(s=>s.destroyed);
   const noWebGPUTexture=target.surfaces.every(s=>s.nativeResource.texture===null&&s.nativeResource.buffer===null);
   await rt.dispose();
-  return {frames:231,videoPixel,resizeCycles:140,submissions,skips,maxSurfaces,heldRejected,pixel,resizedPixel,disposed,noWebGPUTexture,errors};
+  return {profileFrames:gpuProfile.frames.length,profileLimitRejected,frames:231,videoPixel,resizeCycles:140,submissions,skips,maxSurfaces,heldRejected,pixel,resizedPixel,disposed,noWebGPUTexture,errors};
  });
  assert.equal(result.submissions,0);assert.equal(result.noWebGPUTexture,true);assert.equal(result.maxSurfaces,3);assert.equal(result.heldRejected,true);
  assert.deepEqual(result.pixel,[80,16,24,255]);

@@ -90,6 +90,7 @@ struct CudaInterop::Impl {
   CUexternalSemaphore signal = nullptr;
   CUstream stream = nullptr;
   LUID luid{};
+  Json max_grid_dimensions = Json::array();
   uint64_t serial = 0, allocated = 0;
   std::map<uint32_t, std::unique_ptr<Resource>> resources;
   std::vector<std::unique_ptr<Pending>> pending;
@@ -109,6 +110,13 @@ struct CudaInterop::Impl {
   }
 };
 CudaInterop::CudaInterop(CUdevice cuda) : impl_(std::make_unique<Impl>()) {
+  for (auto attr : {CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X,
+                    CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_Y,
+                    CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_Z}) {
+    int maximum = 0;
+    Cu(cuDeviceGetAttribute(&maximum, attr, cuda));
+    impl_->max_grid_dimensions.push_back(maximum);
+  }
   unsigned mask = 0;
   Cu(cuDeviceGetLuid(reinterpret_cast<char*>(&impl_->luid), &mask, cuda));
   Require(mask == 1, "Multi-node CUDA adapters are not supported");
@@ -169,7 +177,7 @@ Json CudaInterop::Probe(const Json& request) {
           {"maxResourceBytes", kResourceLimit},
           {"maxSharedBytes", kSessionLimit},
           {"maxResources", 256},
-          {"maxBlocksPerLaunch", 65536},
+          {"maxGridDimensions", impl_->max_grid_dimensions},
           {"reason",
            same ? "" : "CUDA and WebGPU selected different physical GPUs"}};
 }

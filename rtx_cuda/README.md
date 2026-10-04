@@ -95,7 +95,7 @@ It preserves `createBuffer`, `kernel`, named `bind`, scalar updates,
   host C++ execution, dynamic library loading, and arbitrary PTX are not APIs.
   The source limit is 256 KiB; compilation targets the detected GPU.
 - Per session: 64 MiB of explicit CUDA buffers, 256 buffers, 128 compiled
-  modules, 256 dispatches per batch, 65,536 blocks per launch, and up to 48 KiB
+  modules, 256 dispatches per batch, hardware-reported CUDA grid dimensions, and up to 48 KiB
   requested dynamic shared memory, subject to the device's lower limits.
 - Transfers use 512 KiB chunks over bounded Mojo/stdio messages. Larger CUDA
   buffers transfer automatically in chunks. This is CPU-mediated transport,
@@ -510,7 +510,9 @@ website GpuRuntime / navigator.cuda / navigator.rtx
 The helper executable path is fixed by the browser install directory. Websites
 cannot choose executables, DLL paths, compiler arguments, or native handles.
 The subprocess has a kill-on-close Windows job, one-process limit, 2 GiB
-process-memory budget, and a 45-second request timeout. D3D12 requests require
+process-memory budget, and a 45-second timeout for non-compilation requests.
+CUDA kernel and OptiX pipeline compilation have no wall-clock timeout;
+permission revocation and document teardown still terminate the session. D3D12 requests require
 fence completion; a 30-second fence timeout terminates the helper without
 releasing allocations still in use by the GPU. Renderers never receive CUDA
 addresses or D3D12 handles.
@@ -609,3 +611,29 @@ presentation path does not. The existing shared-GPUTexture API is unchanged.
 231 frames of bounded reuse, rejection while presented, video capture, 140 resize
 cycles, device loss, permission revocation and cleanup while
 rejecting any JavaScript WebGPU queue submission in the normal render loop.
+
+
+### Opt-in native timing diagnostics
+
+`navigator.cuda.execute('cuda.profile', JSON.stringify({$session, frames: 32}))`
+arms capture for the next shared batches. Collect with the same operation and
+`frames: 0` (the default). Collection explicitly synchronizes CUDA; normal
+rendering does not. Captures are bounded to 32 frames, 128 events per frame,
+and 80 characters per phase label. A frame reports `truncated` when its event
+budget is reached. Disabled profiling creates no CUDA timing events.
+
+Reports separate host validation/submission timing from CUDA event intervals
+for external waits and individual jobs. Event intervals include GPU scheduling
+and gaps between host launches; they are not isolated instruction-execution
+counters. Use WebGPU timestamp queries for a corresponding GPU comparison, and
+compare identical shader algorithms, resolution, samples and bounce counts.
+
+CUDA compute launches have no additional total-block cap. `maxGridDimensions` exposes the device X/Y/Z limits; kernel threads per block and device block dimensions are validated against CUDA.
+
+### Native compute optimization defaults
+
+Native CUDA uses `--use_fast_math`, `--dopt=on`, `--Ofast-compile=0`, and
+`--extra-device-vectorization`, with the actual device compute architecture.
+Driver JIT optimization is explicitly level 4; debug and line information are
+disabled. Fast math changes floating-point accuracy and denormal handling.
+These are compute defaults; OptiX retains its own pipeline compiler settings.

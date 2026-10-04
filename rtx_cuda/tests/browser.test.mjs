@@ -44,6 +44,10 @@ try {
   // Playwright's evaluate calls activate the page. Start a fresh document and
   // use CDP without a gesture so this check does not depend on expiry timing.
   await page.goto(origin+'/?gesture-test');
+  // Navigation does not await asynchronous module initialization. Wait for
+  // the permission listener without granting transient user activation.
+  await cdp.send('Runtime.evaluate',{expression:"import('/demo/app.js').then(()=>true)",
+    awaitPromise:true,returnByValue:true,userGesture:false});
   assert.equal((await cdp.send('Runtime.evaluate',{expression:'navigator.userActivation.isActive',
     returnByValue:true,userGesture:false})).result.value,false);
   const withoutGesture=await cdp.send('Runtime.evaluate',{expression:`navigator.cuda.requestPermission().then(

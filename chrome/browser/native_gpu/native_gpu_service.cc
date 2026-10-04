@@ -521,9 +521,15 @@ void NativeGpuService::Pump() {
     return;
   }
   busy_ = true;
-  timeout_.Start(FROM_HERE, base::Seconds(45),
-                 base::BindOnce(&NativeGpuService::StopProcess,
-                                weak_factory_.GetWeakPtr()));
+  // Compilation time depends on shader complexity and the driver optimizer.
+  // Keep permission/document cancellation, but do not impose a wall-clock
+  // deadline on CUDA or OptiX compilation. Other requests remain bounded.
+  if (request.operation != "cuda.kernel" &&
+      request.operation != "cuda.optix.pipeline") {
+    timeout_.Start(FROM_HERE, base::Seconds(45),
+                   base::BindOnce(&NativeGpuService::StopProcess,
+                                  weak_factory_.GetWeakPtr()));
+  }
   process_.AsyncCall(&GpuProcess::Request)
       .WithArgs(request.operation, request.payload, std::move(request.fences),
                 std::move(request.fence_values))

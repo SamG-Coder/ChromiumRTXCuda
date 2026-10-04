@@ -56,17 +56,49 @@ struct Allocation {
 std::array<unsigned, 3> Dimensions(const Json& j) {
   Require(j.is_array() && j.size() == 3,
           "grid and block require three dimensions");
-  return {UInt(j[0], 1, 65535), UInt(j[1], 1, 65535), UInt(j[2], 1, 65535)};
+  return {UInt(j[0], 1, UINT32_MAX), UInt(j[1], 1, UINT32_MAX), UInt(j[2], 1, UINT32_MAX)};
 }
 }  // namespace
 
 struct CudaBackend::Impl {
+  // Opt-in diagnostics. Normal submissions create no timing events and never
+  // wait here. CUDA intervals include scheduling/launch gaps, not only ALU
+  // time.
+  struct Profile {
+    std::vector<CUevent> events;
+    std::vector<std::string> labels;
+    Json cpu;
+    bool truncated = false;
+    void Stamp(CUstream stream, std::string label) {
+      if (events.size() >= 128) {
+        truncated = true;
+        return;
+      }
+      if (label.size() > 80) {
+        label.resize(80);
+      }
+      CUevent event = nullptr;
+      Check(cuEventCreate(&event, CU_EVENT_DEFAULT));
+      events.push_back(event);
+      labels.push_back(std::move(label));
+      Check(cuEventRecord(event, stream));
+    }
+    ~Profile() {
+      for (auto event : events) {
+        cuEventDestroy(event);
+      }
+    }
+  };
+  std::vector<std::unique_ptr<Profile>> profiles;
+  unsigned profile_remaining = 0;
+
   CUdevice device = 0;
   CUcontext context = nullptr;
   int major = 0, minor = 0;
   struct Kernel {
     Module module;
     CUfunction function = nullptr;
+    std::string entry;
   };
   std::unordered_map<uint32_t, std::unique_ptr<Allocation>> buffers;
   std::unordered_map<uint32_t, std::unique_ptr<Kernel>> kernels;
@@ -78,6 +110,7 @@ struct CudaBackend::Impl {
     if (context) {
       cuCtxSetCurrent(context);
     }
+    profiles.clear();
     optix.reset();
     kernels.clear();
     buffers.clear();
@@ -133,6 +166,42 @@ Json CudaBackend::Probe() {
 
 Json CudaBackend::Handle(const std::string& operation, const Json& request) {
   impl_->Init();
+  const auto entered = std::chrono::steady_clock::now();
+  auto elapsed = [&] {
+    return std::chrono::duration<double, std::milli>(
+               std::chrono::steady_clock::now() - entered)
+        .count();
+  };
+  if (operation == "cuda.profile") {
+    // Explicit collection is allowed to block; measured frames do not.
+    Check(cuCtxSynchronize());
+    Json frames = Json::array();
+    for (const auto& profile : impl_->profiles) {
+      Json intervals = Json::array();
+      for (size_t i = 1; i < profile->events.size(); ++i) {
+        float ms = 0;
+        Check(cuEventElapsedTime(&ms, profile->events[i - 1],
+                                 profile->events[i]));
+        intervals.push_back(
+            {{"phase", profile->labels[i]}, {"gpuIntervalMs", ms}});
+      }
+      frames.push_back({{"intervals", intervals},
+                        {"cpu", profile->cpu},
+                        {"truncated", profile->truncated}});
+    }
+    impl_->profiles.clear();
+    impl_->profile_remaining = UInt(request.value("frames", Json(0)), 0, 32);
+    return {
+        {"scope",
+         "CUDA event intervals including GPU scheduling and host launch gaps"},
+        {"frames", frames}};
+  }
+  std::unique_ptr<Impl::Profile> profile;
+  if (operation == "interop.dispatch" && impl_->profile_remaining) {
+    --impl_->profile_remaining;
+    profile = std::make_unique<Impl::Profile>();
+    profile->Stamp(impl_->interop->stream(), "start");
+  }
   auto optix = [&]() -> OptixBackend& {
     if (!impl_->optix) {
       impl_->optix =
@@ -167,6 +236,10 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
     }
     if (shared_dispatch) {
       impl_->interop->Begin(request);
+      if (profile) {
+        profile->cpu["interopBeginMs"] = elapsed();
+        profile->Stamp(impl_->interop->stream(), "external wait");
+      }
     }
   }
   auto buffer = [&](const Json& id) -> Allocation& {
@@ -252,9 +325,12 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
     const auto architecture = "--gpu-architecture=compute_" +
                               std::to_string(impl_->major) +
                               std::to_string(impl_->minor);
+    // Optimized native compute with fast math and no device debug information.
     const char* options[] = {architecture.c_str(), "--std=c++17",
-                             "--no-source-include"};
-    if (nvrtcCompileProgram(program.value, 3, options) != NVRTC_SUCCESS) {
+                             "--no-source-include", "--use_fast_math",
+                             "--dopt=on", "--Ofast-compile=0",
+                             "--extra-device-vectorization"};
+    if (nvrtcCompileProgram(program.value, 7, options) != NVRTC_SUCCESS) {
       size_t n = 0;
       CheckNv(nvrtcGetProgramLogSize(program.value, &n));
       std::string log(n, '\0');
@@ -270,8 +346,13 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
     const char* lowered = nullptr;
     CheckNv(nvrtcGetLoweredName(program.value, entry.c_str(), &lowered));
     auto kernel = std::make_unique<Impl::Kernel>();
-    Check(cuModuleLoadDataEx(&kernel->module.value, ptx.c_str(), 0, nullptr,
-                             nullptr));
+    kernel->entry = entry;
+    CUjit_option jit_options[] = {CU_JIT_OPTIMIZATION_LEVEL,
+                                  CU_JIT_GENERATE_DEBUG_INFO,
+                                  CU_JIT_GENERATE_LINE_INFO};
+    void* jit_values[] = {reinterpret_cast<void*>(uintptr_t{4}), nullptr, nullptr};
+    Check(cuModuleLoadDataEx(&kernel->module.value, ptx.c_str(), 3, jit_options,
+                             jit_values));
     Check(
         cuModuleGetFunction(&kernel->function, kernel->module.value, lowered));
     const auto id = ++impl_->next_id;
@@ -288,6 +369,7 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
       unsigned shared;
       std::vector<std::array<uint8_t, 8>> values;
       Json optix_job;
+      std::string label;
     };
     std::vector<Launch> launches;
     for (const auto& job : jobs) {
@@ -298,6 +380,7 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
             "Unknown GPU job type");
         Launch launch{};
         launch.optix_job = job;
+        launch.label = job.at("type").get<std::string>();
         launches.push_back(std::move(launch));
         continue;
       }
@@ -310,9 +393,16 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
                     UInt(job.value("sharedMemoryBytes", Json(0)), 0, 48 * 1024),
                     {},
                     {}};
-      Require(
-          uint64_t(launch.grid[0]) * launch.grid[1] * launch.grid[2] <= 65536,
-          "Grid exceeds launch budget");
+      launch.label = found->second->entry;
+      constexpr CUdevice_attribute grid_attrs[] = {
+          CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_X, CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_Y,
+          CU_DEVICE_ATTRIBUTE_MAX_GRID_DIM_Z};
+      for (int axis = 0; axis < 3; ++axis) {
+        int maximum = 0;
+        Check(cuDeviceGetAttribute(&maximum, grid_attrs[axis], impl_->device));
+        Require(launch.grid[axis] <= uint32_t(maximum),
+                "Grid exceeds device dimension");
+      }
       int max_threads = 0;
       Check(cuFuncGetAttribute(&max_threads,
                                CU_FUNC_ATTRIBUTE_MAX_THREADS_PER_BLOCK,
@@ -398,10 +488,17 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
           "Kernel arguments do not match its parameter count");
       launches.push_back(std::move(launch));
     }
+    if (profile) {
+      profile->cpu["validationFinishedMs"] = elapsed();
+      profile->Stamp(impl_->interop->stream(), "validation and host gap");
+    }
     for (auto& launch : launches) {
       if (!launch.optix_job.is_null()) {
         optix().Dispatch(launch.optix_job, *impl_->interop,
                          [&](uint32_t id) { return buffer(id).value; });
+        if (profile) {
+          profile->Stamp(impl_->interop->stream(), launch.label);
+        }
         continue;
       }
       std::vector<void*> arguments;
@@ -413,9 +510,17 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
                            launch.block[2], launch.shared,
                            shared_dispatch ? impl_->interop->stream() : nullptr,
                            arguments.data(), nullptr));
+      if (profile) {
+        profile->Stamp(impl_->interop->stream(), launch.label);
+      }
     }
     if (shared_dispatch) {
-      return impl_->interop->End();
+      auto result = impl_->interop->End();
+      if (profile) {
+        profile->cpu["totalHostMs"] = elapsed();
+        impl_->profiles.push_back(std::move(profile));
+      }
+      return result;
     }
     Check(cuCtxSynchronize());
     return {{"dispatches", launches.size()}, {"gpuCompleted", true}};
