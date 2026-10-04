@@ -463,7 +463,8 @@ Json OptixBackend::Handle(const std::string& operation,
   }
   throw std::runtime_error("Unknown OptiX operation");
 }
-void OptixBackend::Dispatch(const Json& job, CudaInterop& interop) {
+void OptixBackend::Dispatch(const Json& job, CudaInterop& interop,
+    const std::function<CUdeviceptr(uint32_t)>& native_buffer) {
   impl_->stream = interop.stream();
   auto& scene = impl_->Lookup(impl_->scenes, job.at("scene"));
   const auto& arguments = job.at("arguments");
@@ -511,8 +512,13 @@ void OptixBackend::Dispatch(const Json& job, CudaInterop& interop) {
     const auto& arg = arguments[i];
     auto* value = values.data() + parameter.offset;
     if (parameter.type == "buffer" || parameter.type == "surface") {
-      const auto id = UInt(arg.at(parameter.type), 1, INT32_MAX);
-      const uint64_t address =
+      const bool local = arg.contains("nativeBuffer");
+      Require(!local || (parameter.type == "buffer" &&
+                            !arg.contains("buffer") && !arg.contains("surface")),
+              "Invalid native OptiX buffer argument");
+      const auto id = UInt(arg.at(local ? "nativeBuffer" : parameter.type),
+                           1, INT32_MAX);
+      const uint64_t address = local ? native_buffer(id) :
           parameter.type == "buffer" ? interop.Buffer(id) : interop.Surface(id);
       std::memcpy(value, &address, 8);
     } else {
@@ -582,7 +588,8 @@ Json OptixBackend::Probe() {
 Json OptixBackend::Handle(const std::string&, uint32_t, const Json&) {
   throw std::runtime_error("OptiX unavailable");
 }
-void OptixBackend::Dispatch(const Json&, CudaInterop&) {
+void OptixBackend::Dispatch(const Json&, CudaInterop&,
+    const std::function<CUdeviceptr(uint32_t)>&) {
   throw std::runtime_error("OptiX unavailable");
 }
 }  // namespace rtx_cuda

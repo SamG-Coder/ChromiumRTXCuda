@@ -151,6 +151,8 @@ Json CudaInterop::Probe(const Json& request) {
   return {{"version", 1},
           {"samePhysicalGpu", same},
           {"sharedBuffers", same},
+          {"nativeOwnedBuffers", same},
+          {"maxNativeOwnedBytes", 64ULL * 1024 * 1024},
           {"sharedTextures", same && !formats.empty()},
           {"textureFormats", formats},
           {"synchronization",

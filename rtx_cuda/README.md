@@ -546,3 +546,25 @@ still goes through EndAccess/BeginAccess. The submission result includes
 report queued GPU dependencies, not CPU waits or proof that GPU work has finished.
 Use a completion wait for CPU readback, explicit timing or bounded backpressure,
 rather than inserting it between dependent kernels in a batch.
+
+
+### Native-owned interop buffers
+
+`getInteropCapabilities()` now reports `nativeOwnedBuffers` and
+`maxNativeOwnedBytes`. Buffers allocated with `cuda.createBuffer` may be passed
+inside `dispatchShared` jobs as `{nativeBuffer: id}`. These IDs are resolved only
+against the current document's CUDA allocation map; they are not pointers and
+are not translated into shared WebGPU resources. Mixing `nativeBuffer` with a
+`buffer` or `surface` field in one argument is rejected. CUDA and OptiX buffer
+parameters accept these allocations; surface parameters remain shared textures.
+
+This lets a renderer retain simulation state in CUDA and acquire/release only
+its final shared image. Memory limits, session revocation and allocation lookup
+checks remain in effect. Geometry-build arguments still require shared buffers.
+The WebCuda wrapper exposes `native.createDeviceBuffer(bytes)` and
+`native.destroyDeviceBuffer(resource)`. This is persistent ownership, not CUDA
+Graph capture or elimination of GPU dispatches.
+
+`node rtx_cuda/tests/native-owned.browser.mjs` checks 40 frames of persistent
+CUDA state feeding OptiX into a real GPUTexture with one shared resource per
+frame, plus allocation limits, destroyed-buffer rejection and disposal.

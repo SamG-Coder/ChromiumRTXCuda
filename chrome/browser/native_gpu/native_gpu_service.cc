@@ -945,6 +945,16 @@ void NativeGpuService::DispatchShared(const std::vector<uint32_t>& ids,
         std::move(callback).Run(false, "Invalid CUDA argument.");
         return;
       }
+      // Native allocations are session-local host IDs, never OS handles or
+      // pointers. The host resolves them against this document's allocation map.
+      if (arg.GetDict().contains("nativeBuffer")) {
+        auto id = arg.GetDict().FindInt("nativeBuffer");
+        if (!id || *id <= 0 || arg.GetDict().contains("buffer") ||
+            arg.GetDict().contains("surface")) {
+          std::move(callback).Run(false, "Invalid native buffer argument.");
+          return;
+        }
+      }
       for (const char* key : {"buffer", "surface"}) {
         if (!arg.GetDict().contains(key)) {
           continue;

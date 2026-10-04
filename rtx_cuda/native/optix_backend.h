@@ -3,6 +3,7 @@
 #include <cuda.h>
 
 #include <memory>
+#include <functional>
 
 #include "protocol.h"
 
@@ -15,7 +16,8 @@ class OptixBackend {
   ~OptixBackend();
   Json Probe();
   Json Handle(const std::string& operation, uint32_t id, const Json& request);
-  void Dispatch(const Json& job, CudaInterop& interop);
+  void Dispatch(const Json& job, CudaInterop& interop,
+                const std::function<CUdeviceptr(uint32_t)>& native_buffer);
 
  private:
   struct Impl;

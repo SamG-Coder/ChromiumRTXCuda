@@ -339,7 +339,13 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
         size_t expected_offset = 0, expected_size = 0;
         Check(cuFuncGetParamInfo(launch.function, i, &expected_offset,
                                  &expected_size));
-        if (arg.contains("buffer")) {
+        if (arg.contains("nativeBuffer")) {
+          Require(expected_size == sizeof(CUdeviceptr) &&
+                      !arg.contains("buffer") && !arg.contains("surface"),
+                  "Invalid native buffer argument");
+          const auto address = buffer(arg.at("nativeBuffer")).value;
+          std::memcpy(bytes.data(), &address, sizeof(address));
+        } else if (arg.contains("buffer")) {
           Require(expected_size == sizeof(CUdeviceptr),
                   "Kernel pointer ABI mismatch");
           const auto address =
@@ -394,7 +400,8 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
     }
     for (auto& launch : launches) {
       if (!launch.optix_job.is_null()) {
-        optix().Dispatch(launch.optix_job, *impl_->interop);
+        optix().Dispatch(launch.optix_job, *impl_->interop,
+                         [&](uint32_t id) { return buffer(id).value; });
         continue;
       }
       std::vector<void*> arguments;
