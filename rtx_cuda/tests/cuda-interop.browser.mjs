@@ -177,13 +177,13 @@ try {
   for(const r of report.resize){assert.equal(r.info.backend,'webgpu+native-cuda');assert.equal(r.readbackBytes,0);assert.deepEqual(r.errors,[]);}
   check('actual ClearWater bloom_pass and present CUDA kernels with real WebGPU simulation and canvas across repeated frames and three resizes');
   await page.setViewportSize({width:960,height:960});await page.selectOption('#quality','2560');
-  await page.waitForFunction(()=>clearwaterDiagnostics.width===2560&&clearwaterDiagnostics.computeBackend==='webgpu');
+  await page.waitForFunction(()=>clearwaterDiagnostics.width===2560&&clearwaterDiagnostics.computeBackend==='webgpu+native-cuda');
   const fallbackStart=await page.evaluate(()=>clearwaterDiagnostics.frames);await page.waitForFunction(n=>clearwaterDiagnostics.frames>=n+8,fallbackStart);
-  report.requirementsFallback=await page.evaluate(()=>({info:clearwaterLab.interopInfo(),readbackBytes:clearwaterDiagnostics.readbackBytes,errors:clearwaterDiagnostics.errors}));
-  assert.equal(report.requirementsFallback.info.backend,'webgpu');assert.equal(report.requirementsFallback.readbackBytes,0);assert.deepEqual(report.requirementsFallback.errors,[]);
+  report.largeGrid=await page.evaluate(()=>({info:clearwaterLab.interopInfo(),readbackBytes:clearwaterDiagnostics.readbackBytes,errors:clearwaterDiagnostics.errors}));
+  assert.equal(report.largeGrid.info.backend,'webgpu+native-cuda');assert.equal(report.largeGrid.readbackBytes,0);assert.deepEqual(report.largeGrid.errors,[]);
   await page.setViewportSize({width:1280,height:800});await page.selectOption('#quality','1152');
   await page.waitForFunction(()=>clearwaterDiagnostics.width===1152&&clearwaterDiagnostics.computeBackend==='webgpu+native-cuda');
-  check('ClearWater falls back when the actual resized launch exceeds native limits, then returns to CUDA at a supported size');
+  check('ClearWater keeps native CUDA above the former 65,536-block cap and after resizing back');
   report.clearwaterLoss=await page.evaluate(async()=>{
     const device=clearwaterLab.device;device.destroy();const loss=await device.lost;
     for(let i=0;i<100&&clearwaterLab.interopInfo().sharedResources;i++)await new Promise(resolve=>setTimeout(resolve,10));
