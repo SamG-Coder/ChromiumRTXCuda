@@ -7,6 +7,7 @@
     "test:browser": "node tests/browser.test.mjs",
     "test:interop": "node tests/cuda-interop.browser.mjs",
     "test:visibility": "node tests/visibility.browser.mjs",
+    "test:optix": "node tests/optix.browser.mjs",
     "test:portable-startup": "node tests/portable-startup.test.mjs",
     "test": "node --test tests/runtime.test.mjs",
     "demo": "node scripts/serve.mjs"

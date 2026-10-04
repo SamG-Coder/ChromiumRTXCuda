@@ -42,6 +42,7 @@ def main():
     parser.add_argument("--native-dir", type=Path, default=PROJECT / "build-portable/Release")
     parser.add_argument("--ngx-runtime", type=Path, required=True)
     parser.add_argument("--cuda-toolkit", type=Path, required=True)
+    parser.add_argument("--optix-sdk", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, default=PROJECT / "dist")
     parser.add_argument("--allow-dirty", action="store_true", help="Internal packaging checks only")
     parser.add_argument("--stage-only", action="store_true",
@@ -76,6 +77,12 @@ def main():
     for file in ("chrome.exe", "chrome.dll"):
         if visibility_report.get("binaries", {}).get(file) != sha256(build / file):
             parser.error(f"Visibility validation is stale for {file}; retest the current binaries")
+    optix_report = json.loads((PROJECT / "test-results/optix/report.json").read_text(encoding="utf-8"))
+    if not optix_report.get("passed"):
+        parser.error("The real OptiX / WebGPU / ClearWater kernel tests must pass first")
+    for file in required_interop_binaries:
+        if optix_report.get("binaries", {}).get(file) != sha256(build / file):
+            parser.error(f"OptiX validation is stale for {file}; retest the current binaries")
     startup_report_path = PROJECT / "test-results/portable-startup.json"
     startup_report = (json.loads(startup_report_path.read_text(encoding="utf-8"))
                       if startup_report_path.is_file() else {})
@@ -133,10 +140,12 @@ def main():
     copy(args.ngx_runtime / "nvngx_dlss.license.txt", "licenses/NVIDIA-RTX.txt")
     copy(args.cuda_toolkit / "EULA.txt", "licenses/NVIDIA-CUDA-EULA.txt")
     copy(args.cuda_toolkit / "LICENSE", "licenses/NVIDIA-CUDA-third-party.txt")
+    copy(args.optix_sdk / "LICENSE.txt", "licenses/NVIDIA-OptiX.txt")
     copy(ROOT / "LICENSE", "licenses/Chromium-BSD.txt")
     copy(PROJECT / "LICENSE", "licenses/ChromiumRTXCuda-BSD.txt")
     copy(PROJECT / "third_party/json/LICENSE.MIT", "licenses/nlohmann-json-MIT.txt")
     copy(PROJECT / "README.md", "API-README.md")
+    copy(PROJECT / "OPTIX.md", "OPTIX-API.md")
     for directory in ("assets", "demo", "js"):
         copy(PROJECT / directory, Path("rtx_cuda") / directory)
     copy(PROJECT / "scripts/serve.mjs", "rtx_cuda/scripts/serve.mjs")
@@ -166,7 +175,7 @@ NVRTC runtime. DLSS additionally requires compatible NVIDIA RTX hardware.
 The test reports describe the GPU, driver and CUDA version actually tested.
 See API-README.md for the website JavaScript APIs and supported texture formats.
 
-Implemented: native CUDA, DXR ray queries, public DLSS Super Resolution / DLAA,
+Implemented: native CUDA, OptiX CUDA ray programs, DXR ray queries, public DLSS Super Resolution / DLAA,
 WebGPU color/depth/motion GPU texture interop, and native CUDA / WebGPU shared
 buffers and textures with GPU-side fences. ClearWater uses CUDA bloom and tone
 mapping while preserving its WebGPU device and canvas. DLSS 5 is excluded.
@@ -190,6 +199,7 @@ Source: https://github.com/SamG-Coder/ChromiumRTXCuda
     report_names = ["native.json", "dawn-interop.json", "browser.json"]
     text_file("validation/cuda-webgpu-interop.json", json.dumps(interop_report, indent=2) + "\n")
     text_file("validation/visibility.json", json.dumps(visibility_report, indent=2) + "\n")
+    text_file("validation/optix.json", json.dumps(optix_report, indent=2) + "\n")
     if (PROJECT / "test-results/prompt.json").is_file():
         report_names.append("prompt.json")
     for report_name in report_names:

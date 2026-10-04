@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 find_package(CUDAToolkit 12.5 REQUIRED)
+set(RTXCUDA_OPTIX_SDK "" CACHE PATH "OptiX 9.1 headers from NVIDIA/optix-dev")
 set(RTXCUDA_NGX_SDK "" CACHE PATH "Optional public NGX SDK directory")
 set(RTXCUDA_NGX_RUNTIME "" CACHE PATH "Local signed NGX runtime directory")
 set(RTXCUDA_DXC "" CACHE FILEPATH "Windows SDK dxc.exe")
@@ -26,6 +27,7 @@ add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/raytrace.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/native/raytrace.hlsl"
   DEPENDS native/raytrace.hlsl VERBATIM)
 add_executable(rtx_cuda_host native/main.cc native/cuda_backend.cc native/cuda_interop.cc native/rtx_backend.cc
+  native/optix_backend.cc
   "${CMAKE_CURRENT_BINARY_DIR}/generated/raytrace.h")
 target_include_directories(rtx_cuda_host PRIVATE native third_party/json
   "${CMAKE_CURRENT_BINARY_DIR}/generated")
@@ -35,6 +37,23 @@ target_compile_options(rtx_cuda_host PRIVATE /W4 /EHsc /utf-8)
 target_link_options(rtx_cuda_host PRIVATE /NODEFAULTLIB:LIBCMT)
 target_link_libraries(rtx_cuda_host PRIVATE CUDA::cuda_driver CUDA::nvrtc
   d3d12 dxgi dxguid advapi32 wintrust crypt32)
+if(RTXCUDA_OPTIX_SDK)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  if(NOT EXISTS "${RTXCUDA_OPTIX_SDK}/include/optix.h")
+    message(FATAL_ERROR "RTXCUDA_OPTIX_SDK must contain include/optix.h")
+  endif()
+  file(GLOB_RECURSE _optix_headers "${RTXCUDA_OPTIX_SDK}/include/*.h")
+  add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/generated/optix_headers.h"
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/embed_optix.py"
+      "${RTXCUDA_OPTIX_SDK}/include" "${CMAKE_CURRENT_BINARY_DIR}/generated/optix_headers.h"
+    DEPENDS scripts/embed_optix.py ${_optix_headers} VERBATIM)
+  target_sources(rtx_cuda_host PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated/optix_headers.h")
+  target_include_directories(rtx_cuda_host PRIVATE "${RTXCUDA_OPTIX_SDK}/include")
+  target_compile_definitions(rtx_cuda_host PRIVATE RTXCUDA_WITH_OPTIX=1)
+  target_link_libraries(rtx_cuda_host PRIVATE cfgmgr32)
+else()
+  target_compile_definitions(rtx_cuda_host PRIVATE RTXCUDA_WITH_OPTIX=0)
+endif()
 if(RTXCUDA_NGX_SDK)
   if(NOT EXISTS "${RTXCUDA_NGX_SDK}/include/nvsdk_ngx.h")
     message(FATAL_ERROR "RTXCUDA_NGX_SDK must contain include/nvsdk_ngx.h")

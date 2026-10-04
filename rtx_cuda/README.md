@@ -346,6 +346,16 @@ The demo's WebGPU renderer supplies a moving object, nonzero motion vectors,
 depth, and eight jittered color frames. Motion points from the current object
 position to its previous position and excludes projection jitter.
 
+## OptiX CUDA ray tracing
+
+The shared WebCuda runtime exposes `native.rayTracingPipeline()`,
+`native.createAccelerationStructure()`, `batch.buildAccelerationStructure()`
+and `batch.trace()`. `.cu` raygen/hit programs can call real `optixTrace()` on
+RTX hardware, use GPU-resident triangle geometry, and write shared buffers or
+surfaces for WebGPU presentation. This path uses the existing native GPU
+permission, same-adapter check and GPU ownership fences. See the
+[OptiX API, example and supported limits](OPTIX.md).
+
 ## Build
 
 Follow Chromium's [Windows prerequisites](../docs/windows_build_instructions.md)
@@ -369,6 +379,7 @@ From `src`, with depot_tools on PATH:
 ```powershell
 .\rtx_cuda\scripts\build.ps1 `
   -NgxSdk 'D:\SDKs\streamline\external\ngx-sdk' `
+  -OptixSdk 'D:\SDKs\optix-dev' `
   -NgxRuntime 'D:\SDKs\streamline\bin\x64'
 ```
 
@@ -388,6 +399,7 @@ npm test
 npm run test:native
 npm run test:browser
 npm run test:visibility
+npm run test:optix
 npm run demo
 ```
 
@@ -438,6 +450,7 @@ python rtx_cuda/scripts/package_release.py `
   --runtime-deps chrome-runtime-deps.txt `
   --native-dir rtx_cuda/build-portable/Release `
   --ngx-runtime 'D:/SDKs/streamline/bin/x64' `
+  --optix-sdk 'D:/SDKs/optix-dev' `
   --cuda-toolkit 'C:/Program Files/NVIDIA GPU Computing Toolkit/CUDA/v13.3'
 ```
 

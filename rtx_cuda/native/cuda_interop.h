@@ -17,6 +17,7 @@ class CudaInterop {
   Json Create(uint32_t id, const Json&);
   void Destroy(uint32_t id);
   CUdeviceptr Buffer(uint32_t id) const;
+  uint64_t BufferSize(uint32_t id) const;
   CUsurfObject Surface(uint32_t id) const;
   void Begin(const Json&);
   Json End();

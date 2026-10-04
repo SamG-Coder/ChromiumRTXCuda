@@ -10,6 +10,7 @@
 #include <unordered_map>
 
 #include "cuda_interop.h"
+#include "optix_backend.h"
 
 namespace rtx_cuda {
 namespace {
@@ -72,10 +73,12 @@ struct CudaBackend::Impl {
   uint32_t next_id = 0;
   size_t allocated = 0;
   std::unique_ptr<CudaInterop> interop;
+  std::unique_ptr<OptixBackend> optix;
   ~Impl() {
     if (context) {
       cuCtxSetCurrent(context);
     }
+    optix.reset();
     kernels.clear();
     buffers.clear();
     interop.reset();
@@ -130,13 +133,30 @@ Json CudaBackend::Probe() {
 
 Json CudaBackend::Handle(const std::string& operation, const Json& request) {
   impl_->Init();
+  auto optix = [&]() -> OptixBackend& {
+    if (!impl_->optix) {
+      impl_->optix =
+          std::make_unique<OptixBackend>(impl_->context, impl_->device);
+    }
+    return *impl_->optix;
+  };
+  if (operation.starts_with("cuda.optix.")) {
+    return optix().Handle(operation, ++impl_->next_id, request);
+  }
   const bool shared_dispatch = operation == "interop.dispatch";
   if (operation.starts_with("interop.")) {
     if (!impl_->interop) {
       impl_->interop = std::make_unique<CudaInterop>(impl_->device);
     }
     if (operation == "interop.probe") {
-      return impl_->interop->Probe(request);
+      auto capabilities = impl_->interop->Probe(request);
+      try {
+        capabilities["optix"] = optix().Probe();
+      } catch (const std::exception& error) {
+        capabilities["optix"] = {{"available", false},
+                                 {"reason", error.what()}};
+      }
+      return capabilities;
     }
     if (operation == "interop.create") {
       return impl_->interop->Create(++impl_->next_id, request);
@@ -267,9 +287,20 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
       std::array<unsigned, 3> grid, block;
       unsigned shared;
       std::vector<std::array<uint8_t, 8>> values;
+      Json optix_job;
     };
     std::vector<Launch> launches;
     for (const auto& job : jobs) {
+      if (job.contains("type") && job.at("type") != "cuda") {
+        Require(shared_dispatch, "OptiX requires shared GPU resources");
+        Require(
+            job.at("type") == "optix-build" || job.at("type") == "optix-trace",
+            "Unknown GPU job type");
+        Launch launch{};
+        launch.optix_job = job;
+        launches.push_back(std::move(launch));
+        continue;
+      }
       const auto found =
           impl_->kernels.find(UInt(job.at("kernel"), 1, INT32_MAX));
       Require(found != impl_->kernels.end(), "Unknown CUDA kernel");
@@ -277,6 +308,7 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
                     Dimensions(job.at("grid")),
                     Dimensions(job.at("block")),
                     UInt(job.value("sharedMemoryBytes", Json(0)), 0, 48 * 1024),
+                    {},
                     {}};
       Require(
           uint64_t(launch.grid[0]) * launch.grid[1] * launch.grid[2] <= 65536,
@@ -361,6 +393,10 @@ Json CudaBackend::Handle(const std::string& operation, const Json& request) {
       launches.push_back(std::move(launch));
     }
     for (auto& launch : launches) {
+      if (!launch.optix_job.is_null()) {
+        optix().Dispatch(launch.optix_job, *impl_->interop);
+        continue;
+      }
       std::vector<void*> arguments;
       for (auto& value : launch.values) {
         arguments.push_back(value.data());

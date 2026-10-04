@@ -1,6 +1,7 @@
 param(
   [string]$NgxSdk = '',
   [string]$NgxRuntime = '',
+  [string]$OptixSdk = '',
   [string]$Output = 'out/RTXCuda',
   [ValidateRange(1,64)][int]$Jobs = 8,
   [switch]$NativeOnly
@@ -14,6 +15,7 @@ if (!$outputPath.StartsWith($sourceRoot + [IO.Path]::DirectorySeparatorChar,[Str
 $nativeBuild = Join-Path $sourceRoot 'rtx_cuda/build-native'
 $arguments = @('-S',(Join-Path $sourceRoot 'rtx_cuda'),'-B',$nativeBuild,'-A','x64',
   "-DRTXCUDA_NGX_SDK=$($NgxSdk.Replace('\','/'))",
+  "-DRTXCUDA_OPTIX_SDK=$($OptixSdk.Replace('\','/'))",
   "-DRTXCUDA_NGX_RUNTIME=$($NgxRuntime.Replace('\','/'))")
 & cmake @arguments
 if ($LASTEXITCODE) { throw 'Native configuration failed.' }

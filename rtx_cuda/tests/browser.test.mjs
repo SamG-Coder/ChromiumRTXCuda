@@ -41,14 +41,11 @@ try {
   const {states} = await cdp.send('Page.getPermissionsPolicyState',{frameId:frameTree.frame.id});
   assert.equal(states.find(state=>state.feature==='native-gpu')?.allowed,true);
   check('DevTools enumerates the native-gpu Permissions Policy');
-  // Playwright's evaluate calls activate the page. CDP userGesture:false does
-  // not clear that activation, so let it expire before testing the click gate.
-  const activationStart=Date.now();
-  while((await cdp.send('Runtime.evaluate',{expression:'navigator.userActivation.isActive',
-    returnByValue:true,userGesture:false})).result.value) {
-    assert.ok(Date.now()-activationStart<10000,'Transient user activation did not expire');
-    await new Promise(resolve=>setTimeout(resolve,100));
-  }
+  // Playwright's evaluate calls activate the page. Start a fresh document and
+  // use CDP without a gesture so this check does not depend on expiry timing.
+  await page.goto(origin+'/?gesture-test');
+  assert.equal((await cdp.send('Runtime.evaluate',{expression:'navigator.userActivation.isActive',
+    returnByValue:true,userGesture:false})).result.value,false);
   const withoutGesture=await cdp.send('Runtime.evaluate',{expression:`navigator.cuda.requestPermission().then(
     value=>({value}),error=>({error:error.name}))`,awaitPromise:true,returnByValue:true,userGesture:false});
   assert.equal(withoutGesture.result.value.error,'NotAllowedError',JSON.stringify(withoutGesture));

@@ -315,6 +315,10 @@ CUsurfObject CudaInterop::Surface(uint32_t id) const {
           "Shared surface was not acquired for this dispatch");
   return it->second->surface;
 }
+uint64_t CudaInterop::BufferSize(uint32_t id) const {
+  Buffer(id);  // Also verifies ownership and resource type.
+  return impl_->resources.at(id)->d3d->GetDesc().Width;
+}
 void CudaInterop::Begin(const Json& request) {
   impl_->acquired.clear();
   const auto& resources = request.at("resources");
