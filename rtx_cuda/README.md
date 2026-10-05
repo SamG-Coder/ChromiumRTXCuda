@@ -1,19 +1,20 @@
 # ChromiumRTXCuda
 
-## Latest build: 0.1.0-alpha.6
+## Latest build: 0.1.0-alpha.7
 
-[Release notes](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/tag/v0.1.0-alpha.6) Ã‚Â· [Download Windows x64 ZIP](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/download/v0.1.0-alpha.6/ChromiumRTXCuda-0.1.0-alpha.6-windows-x64.zip) Ã‚Â· [SHA-256 checksum](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/download/v0.1.0-alpha.6/ChromiumRTXCuda-0.1.0-alpha.6-windows-x64.zip.sha256)
+[Release notes](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/tag/v0.1.0-alpha.7) | [Download Windows x64 ZIP](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/download/v0.1.0-alpha.7/ChromiumRTXCuda-0.1.0-alpha.7-windows-x64.zip) | [SHA-256 checksum](https://github.com/SamG-Coder/ChromiumRTXCuda/releases/download/v0.1.0-alpha.7/ChromiumRTXCuda-0.1.0-alpha.7-windows-x64.zip.sha256)
 
 Extract the complete ZIP into a new folder and run **`chrome.exe`**.
 `Start ChromiumRTXCuda.cmd` is optional: it uses a separate `profile` folder
 beside the browser and skips first-run/default-browser prompts. Both entry
 points support native CUDA and RTX.
 
-This prerelease fixes newer-PTX rejection on older CUDA 13 drivers by compiling
-ordinary CUDA kernels directly to device-specific CUBIN machine code. It retains
-optimized native CUDA defaults with fast math and no
-debug information, hardware-based CUDA grid limits, direct native canvas
-presentation, and no wall-clock deadline for CUDA/OptiX shader compilation.
+This prerelease uses a non-component Windows build for a smaller distribution.
+Development builds remain separate in `out/RTXCuda`; use `-Release` for publishing.
+Native CUDA, OptiX/DXR, DLSS and WebGPU interoperability are retained, together
+with the CUBIN driver compatibility fix from alpha.6. Optimized CUDA defaults,
+direct native canvas presentation and no browser wall-clock deadline for
+CUDA/OptiX shader compilation are retained.
 
 Try the [RTX Showcase](https://samg-coder.github.io/RTXShowcase/).
 
