@@ -199,7 +199,11 @@ Chromium third-party notices are also available at chrome://credits.
 
 Source: https://github.com/SamG-Coder/ChromiumRTXCuda
 """)
-    report_names = ["native.json", "dawn-interop.json", "browser.json"]
+    report_names = ["native.json", "browser.json"]
+    # This standalone diagnostic loads development-only Dawn component DLLs.
+    # The browser interop report above validates the actual release binaries.
+    if component_build:
+        report_names.append("dawn-interop.json")
     text_file("validation/cuda-webgpu-interop.json", json.dumps(interop_report, indent=2) + "\n")
     text_file("validation/visibility.json", json.dumps(visibility_report, indent=2) + "\n")
     text_file("validation/optix.json", json.dumps(optix_report, indent=2) + "\n")
