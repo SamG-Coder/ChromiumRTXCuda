@@ -24,7 +24,7 @@ const capabilities=[
 function permissions() {
   const script=`$ErrorActionPreference='Stop'
   $paths=@($env:RTXCUDA_ACL_ROOT,(Join-Path $env:RTXCUDA_ACL_ROOT 'chrome.exe'),
-    (Join-Path $env:RTXCUDA_ACL_ROOT 'base.dll'),(Join-Path $env:RTXCUDA_ACL_ROOT 'locales\\en-US.pak'),
+    (Join-Path $env:RTXCUDA_ACL_ROOT 'chrome.dll'),(Join-Path $env:RTXCUDA_ACL_ROOT 'locales\\en-US.pak'),
     $env:RTXCUDA_ACL_PROFILE,(Join-Path $env:RTXCUDA_ACL_PROFILE 'private-sentinel.dll'))
   $result=foreach($path in $paths) {
     $acl=Get-Acl -LiteralPath $path
